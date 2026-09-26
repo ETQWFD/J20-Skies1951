@@ -1,0 +1,320 @@
+// main.c - 《长空·1951》 entry, menus, endings, history
+#include "common.h"
+#include "noise.h"
+#include "rlgl.h"
+
+// Portable strsep replacement (strsep is BSD/glibc and absent from the Windows
+// CRT); same semantics so the '|'-delimited text wrapping works on every platform.
+static char* NextSeg(char **stringp, const char *delim)
+{
+    char *s = (stringp != NULL) ? *stringp : NULL;
+    if (s == NULL) return NULL;
+    char *p = s;
+    while ((*p != '\0') && (strchr(delim, *p) == NULL)) p++;
+    char *tok = s;
+    if (*p != '\0') { *p = '\0'; *stringp = p + 1; }
+    else *stringp = NULL;
+    return tok;
+}
+
+int gSelfTest=0, gUncap=1;
+char gShotDir[512]=".";
+Font gFont;
+
+Font GameFont(void){ return gFont; }
+void LoadGameFont(void)
+{
+#if defined(FONT_EMBEDDED)
+    extern const unsigned char _binary_gamefont_ttf_start[];
+    extern const unsigned char _binary_gamefont_ttf_end[];
+    #include "font_cps.h"
+    gFont = LoadFontFromMemory(".ttf",(unsigned char*)_binary_gamefont_ttf_start,
+             (int)(_binary_gamefont_ttf_end-_binary_gamefont_ttf_start),
+             48,(int*)gFontCps,gFontCpsCount);
+    GenTextureMipmaps(&gFont.texture);
+    if (gFont.texture.id==0) gFont=GetFontDefault();
+#else
+    gFont=GetFontDefault();
+#endif
+    SetTextureFilter(gFont.texture, TEXTURE_FILTER_BILINEAR);
+}
+
+void CN(const char* t,int x,int y,int sz,Color c)
+{ if(t) DrawTextEx(gFont,t,(Vector2){(float)x,(float)y},(float)sz,2.0f,c); }
+int CNWidth(const char* t,int sz){ return (int)MeasureTextEx(gFont,t,(float)sz,2.0f).x; }
+void CNC(const char* t,int cx,int y,int sz,Color c)
+{ CN(t,cx-CNWidth(t,sz)/2,y,sz,c); }
+
+enum { ST_MENU, ST_HELP, ST_AIR, ST_GROUND, ST_END };
+
+// ----------------------------------------------------------------- ending data
+static const char* AIR_TITLE[16]={0};
+static const char* GND_TITLE[16]={0};
+
+static const char* airPara(int id)
+{
+    switch(id){
+    case 101: return "你夺取了制空权，又摧毁了地面装甲纵队，干净利落地返航着陆。|年轻的鹰，第一次出击就把天空和大地一起守住了。";
+    case 102: return "四波美机群全部被击落，北方的天空安静下来。|战友们抬头望着你——后来人们把这片天空称作'米格走廊'。";
+    case 103: return "你摧毁了河谷里的全部敌军车辆与高炮，地面的冲锋号准时吹响。|钢铁没有挡住步兵，因为他们头顶有你。";
+    case 105: return "你带着战果与战伤低空返航，机务看见了机身上的弹孔。|初战告捷，而真正的战争才刚刚开始。";
+    case 106: return "你在任务完成前选择了返航。跑道尽头，新的弹药和命令正在等你。|胜利从不属于一次犹豫，但属于活着回来继续战斗的人。";
+    case 110: return "战机失去控制的最后一刻，你仍朝着敌机压了过去。|火光里没有人跳伞。群山记得这个没有留下名字的飞行员。";
+    default:  return "战机坠落在异国的群山之间。|天空还在战斗，战友们会接替你拉起来——这场战争没有因为一个人的坠落而结束。";
+    }
+}
+static const char* gndPara(int id)
+{
+    switch(id){
+    case 201: return "高地上最后一个火力点被拔掉，红旗插上了阵地。|你和剩下的战友站在寒风里，听见后方传来新一轮的冲锋号。";
+    case 202: return "你突入高地、死死顶住了反扑，为后续部队撕开了口子。|阵地在我们手里——这句话，是用很多人的命换来的。";
+    case 203: return "你在冲锋路上倒下时，身边已经躺着数倍于你的敌人。|身后的战友跨过你继续向前，号声没有停。";
+    default:  return "冲锋被压在半山腰。你没能看到天亮时的高地。|可总有人要先冲上去——后来上去的人里，有人记得你。";
+    }
+}
+static const char* HISTORY[]={
+"【铭记 · 为什么是1951】",
+"1950年6月，朝鲜战争爆发。以美国为主的'联合国军'越过三八线，战火烧到鸭绿江边，新中国的安全受到严重威胁。",
+"1950年10月，中国人民志愿军跨过鸭绿江——抗美援朝，保家卫国。",
+"云山、长津湖、松骨峰、上甘岭……志愿军在严寒、饥饿与劣势装备下，把世界上最强的军队挡回了三八线。",
+"1950年底起，年轻的人民空军在朝鲜北部上空奋勇作战，那片空域后来被对手称作'米格走廊'。",
+"1953年7月27日，《朝鲜停战协定》签署。这一战，打出了新中国的国威与军威，换来了几十年和平建设的外部环境。",
+};
+static const char* DEVNOTE=
+"【关于这款游戏】歼-20'威龙'2011年才首飞，从未参加过那场战争。让它出现在1951年的天空，|是一句'如果当年有我们'的告慰：今天你随手能驾驶的隐身战机，是当年冰雕连、坑道里的战士们做梦也不敢想的东西。|做这款游戏，不是为了宣扬战争，而是希望操作它的人记得——是哪一代人用步枪、棉衣和命，把和平打了下来。|铭记历史，珍爱和平，吾辈自强。";
+
+static void drawWrapped(const char** lines,int n,int x,int y,int sz,int gap,Color c)
+{
+    for(int i=0;i<n;i++)
+    {
+        // split on '|'
+        char buf[512]; strncpy(buf,lines[i],sizeof(buf)-1); buf[sizeof(buf)-1]=0;
+        char*p=buf; char*seg;
+        while((seg=NextSeg(&p,"|"))!=NULL){ CN(seg,x,y,sz,c); y+=sz+gap; }
+    }
+}
+
+void DrawEnding(int mode,int endingId,int fromAir,void* res)
+{
+    (void)res;
+    bool sacrifice = (endingId==110||endingId==203);
+    Color titleC = sacrifice?(Color){255,120,100,255}:((mode==2&&endingId>=111)?(Color){255,160,140,255}:(Color){255,220,120,255});
+    int y=70;
+    const char* title;
+    char tbuf[64]={0};
+    if(fromAir)
+    {
+        switch(endingId){
+        case 101:title="长空铸剑 · 全胜";break;
+        case 102:title="制空权 · 米格走廊";break;
+        case 103:title="铁拳遮断 · 地面肃清";break;
+        case 105:title="带伤返航 · 初战告捷";break;
+        case 106:title="鸣金收兵";break;
+        case 110:title="血染长空 · 壮烈";break;
+        default:title="折戟长空";break;
+        }
+    }
+    else
+    {
+        switch(endingId){
+        case 201:title="攻克高地 · 胜利";break;
+        case 202:title="阵地在手 · 胜利";break;
+        case 203:title="英勇牺牲 · 浩气长存";break;
+        default:title="倒在冲锋路上";break;
+        }
+    }
+    (void)tbuf;(void)AIR_TITLE;(void)GND_TITLE;
+    DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){10,12,18,245});
+    CNC(title,GetScreenWidth()/2,y,40,titleC); y+=64;
+    DrawLine(GetScreenWidth()/2-220,y-16,GetScreenWidth()/2+220,y-16,(Color){120,110,80,255});
+
+    const char* para = fromAir?airPara(endingId):gndPara(endingId);
+    char pbuf[640]; strncpy(pbuf,para,sizeof(pbuf)-1); pbuf[sizeof(pbuf)-1]=0;
+    char* one=pbuf; char* seg; int x=120;
+    while((seg=NextSeg(&one,"|"))){CN(seg,x,y,19,(Color){225,228,235,255});y+=28;}
+    y+=8;
+
+    // stats
+    if(fromAir)
+    {
+        CN(TextFormat("击落美机 %d 架    摧毁地面目标 %d 个    幸存波次 4/4    剩余导弹 %d    作战时长 %ds    得分 %d",
+            gAirResult.jetsKilled,gAirResult.groundKilled,gAirResult.missilesLeft,(int)gAirResult.timeAlive,(int)gAirResult.score),
+            x,y,17,(Color){170,200,230,255});
+    }
+    else
+    {
+        CN(TextFormat("歼敌 %d 人    幸存战友 %d/%d    作战时长 %ds    剩余生命 %d%%",
+            gGroundResult.foesKilled,gGroundResult.friendliesAlive,8,(int)gGroundResult.timeAlive,(int)gGroundResult.hp),
+            x,y,17,(Color){170,200,230,255});
+    }
+    y+=34; DrawLine(x,y,GetScreenWidth()-x,y,(Color){70,74,84,255}); y+=18;
+    drawWrapped(HISTORY,sizeof(HISTORY)/sizeof(HISTORY[0]),x,y,16,6,(Color){205,200,180,255});
+    y+= sizeof(HISTORY)/sizeof(HISTORY[0])*0; // recompute below
+    // history height approx: 6 entries * (22 + wraps) — draw devnote near fixed lower area
+    int dy=GetScreenHeight()-128;
+    char db[700]; strncpy(db,DEVNOTE,sizeof(db)-1); db[sizeof(db)-1]=0;
+    char* dp=db;
+    while((seg=NextSeg(&dp,"|"))){CN(seg,x,dy,15,(Color){180,170,140,255});dy+=21;}
+    CNC("按 空格 / 回车 / 鼠标点击 返回主菜单",GetScreenWidth()/2,GetScreenHeight()-34,16,(Color){200,200,210,220});
+}
+
+// ----------------------------------------------------------------- help
+static void drawHelp(void)
+{
+    DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){12,16,22,240});
+    int x=110,y=80;
+    CNC("操作与说明",GetScreenWidth()/2,y,36,(Color){255,224,140,255}); y+=56;
+    const char* L[]={
+    "【空战 · 歼-20】",
+    "W/S 加减速(失速会掉高度)   ↑/↓ 俯仰   A/D 滚转   Q/E 偏航",
+    "空格 机炮    F 锁定后发射导弹    B 投掷航弹",
+    "在机场(出生点)附近 低空慢速 按 H 返航着陆，根据战果进入不同结局；被击落按战绩判定。",
+    "消灭4波F-86并摧毁北方河谷的15个地面目标可得全胜；雷达红点=敌机，黄点=地面目标。",
+    "",
+    "【陆战 · 志愿军步兵】",
+    "WASD 移动   Shift 冲刺   空格 跃进/翻越   鼠标 瞄准   左键 射击",
+    "数字1 莫辛-纳甘步枪(高伤害拉栓)   数字2 AKM突击步枪(连发)   R 装填",
+    "跟随战友冲锋，夺取前方高地上的红旗阵地，坚守即胜；注意土工作业与敌军火力。",
+    "",
+    "【其它】",
+    "每次启动都会实时编译GLSL光照着色器、用柏林噪声重新生成地形；帧率不封顶，实际帧率取决于硬件。",
+    "本作为单机程序化原型，无任何外部资源依赖；语音/无线电AI、VR、安卓APK为可扩展项，详见随附README。",
+    };
+    for(unsigned i=0;i<sizeof(L)/sizeof(L[0]);i++)
+    { Color c = ((unsigned char)L[i][0]==0xE3)?(Color){255,200,120,255}:(Color){220,224,232,255}; CN(L[i],x,y,17,c); y+=25; }
+    CNC("按 空格 / ESC 返回",GetScreenWidth()/2,GetScreenHeight()-40,17,(Color){200,200,210,230});
+}
+
+// ----------------------------------------------------------------- menu
+static Camera3D menuCam; static float menuT=0;
+static void drawMenuBg(void)
+{
+    menuT+=0.016f;
+    float r=120; Vector3 c={cosf(menuT*0.3f)*r,40,sinf(menuT*0.3f)*r};
+    menuCam.position=c; menuCam.target=(Vector3){0,18,0}; menuCam.up=(Vector3){0,1,0};
+    Scene_SetCamera(menuCam);
+    BeginMode3D(menuCam);
+    Terrain_Draw(menuCam); Sea_Draw(menuCam); Env_Draw(menuCam);
+    Quaternion q=QuaternionMultiply(QuaternionFromAxisAngle((Vector3){0,1,0},menuT*0.6f),
+                                    QuaternionFromAxisAngle((Vector3){1,0,0},0.12f));
+    DrawJ20((Vector3){0,34,0},q,2.2f,1);
+    FX_Draw3D(menuCam);
+    EndMode3D();
+}
+
+typedef struct { Rectangle r; const char* name; int key, to; } Btn;
+static int menuLoop(int *go)
+{
+    Btn b[3]={ {{0,0,420,64},"① 空战模式 · 驾驶歼-20",KEY_ONE,ST_AIR},
+               {{0,0,420,64},"② 陆战模式 · 志愿军步兵",KEY_TWO,ST_GROUND},
+               {{0,0,420,64},"③ 操作说明 / 历史",KEY_THREE,ST_HELP} };
+    int frame=0, sel=-1;
+    while(!WindowShouldClose())
+    {
+        float dt=GetFrameTime(); frame++; FX_Update(dt); Env_Update(dt);
+        Vector2 m=GetMousePosition();
+        BeginDrawing();
+        ClearBackground((Color){150,180,210,255});
+        drawMenuBg();
+        DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){6,10,18,120});
+        CNC("长 空 · 1951",GetScreenWidth()/2,120,64,(Color){255,232,150,255});
+        CNC("J-20 SKIES OVER KOREA · 抗美援朝 假想作战",GetScreenWidth()/2,190,22,(Color){225,230,240,235});
+        for(int i=0;i<3;i++)
+        {
+            b[i].r.x=GetScreenWidth()/2-210; b[i].r.y=280+i*82;
+            bool hov=CheckCollisionPointRec(m,b[i].r);
+            DrawRectangleRec(b[i].r,hov?(Color){180,60,45,220}:(Color){20,28,40,200});
+            DrawRectangleLinesEx(b[i].r,2,(Color){255,210,140,255});
+            CNC(b[i].name,GetScreenWidth()/2,(int)b[i].r.y+18,23,(Color){240,240,245,255});
+            if(hov && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ sel=b[i].to; }
+            if(IsKeyPressed(b[i].key)) sel=b[i].to;
+        }
+        CNC("铭记历史 · 珍爱和平 · 吾辈自强",GetScreenWidth()/2,GetScreenHeight()-90,18,(Color){255,225,180,220});
+        CNC("鼠标点击或按 1/2/3 选择 · ESC 退出",GetScreenWidth()/2,GetScreenHeight()-54,15,(Color){210,215,225,210});
+        EndDrawing();
+        if(sel>=0){*go=sel;return sel;}
+        if(gSelfTest){ TakeScreenshot(TextFormat("%s/shot_menu.png",gShotDir)); *go=ST_AIR; return ST_AIR; }
+    }
+    *go=-1; return -1;
+}
+
+int main(int argc,char**argv)
+{
+    for(int i=1;i<argc;i++)
+    {
+        if(strcmp(argv[i],"--selftest")==0) gSelfTest=1;
+        else if(strcmp(argv[i],"--shotdir")==0 && i+1<argc){ strncpy(gShotDir,argv[++i],sizeof(gShotDir)-1); }
+        else if(strcmp(argv[i],"--vsync")==0) gUncap=0;
+    }
+    srand(19511025);
+    SetConfigFlags(FLAG_MSAA_4X_HINT|FLAG_WINDOW_RESIZABLE);
+    InitWindow(1280,720,APP_TITLE);
+    if(gUncap) SetTargetFPS(0); else SetTargetFPS(60);
+    rlSetClipPlanes(0.1f,9000.0f);
+    SetExitKey(0); // we manage ESC ourselves
+
+    Noise_Seed(19510125);
+    LoadGameFont();
+
+    // loading frame (shader compile + terrain happens right after)
+    BeginDrawing(); ClearBackground((Color){10,12,18,255});
+    CNC("正在编译着色器 · 用柏林噪声生成朝鲜地形 …",640,340,22,(Color){220,225,235,255});
+    EndDrawing();
+
+    Terrain_Init();
+    Scene_Load();
+    Env_Load();
+    Sfx_Load();
+    menuCam=(Camera3D){0}; menuCam.fovy=60; menuCam.projection=CAMERA_PERSPECTIVE; menuCam.up=(Vector3){0,1,0};
+
+    int state=ST_MENU, endMode=1, endId=0, pending=-1, endFrames=0;
+    while(!WindowShouldClose())
+    {
+        if(state==ST_MENU)
+        {
+            int go=ST_MENU; menuLoop(&go);
+            if(go<0) break;
+            state=go;
+        }
+        else if(state==ST_HELP)
+        {
+            int f=0;
+            while(!WindowShouldClose()){
+                BeginDrawing(); drawHelp(); EndDrawing(); f++;
+                if(IsKeyPressed(KEY_SPACE)||IsKeyPressed(KEY_ESCAPE)||IsKeyPressed(KEY_ENTER)||IsMouseButtonPressed(0))break;
+                if(gSelfTest && f==20){ TakeScreenshot(TextFormat("%s/shot_help.png",gShotDir)); break; }
+            }
+            state=ST_MENU;
+            if(gSelfTest) break;
+        }
+        else if(state==ST_AIR)
+        {
+            int m,e; Air_Run(&m,&e);
+            if(m==0){state=ST_MENU;continue;}
+            endMode=1;endId=e;state=ST_END;pending=gSelfTest?ST_GROUND:-1;endFrames=0;
+        }
+        else if(state==ST_GROUND)
+        {
+            int m,e; Ground_Run(&m,&e);
+            if(m==0){state=ST_MENU;continue;}
+            endMode=2;endId=e;state=ST_END;pending=gSelfTest?ST_HELP:-1;endFrames=0;
+        }
+        else if(state==ST_END)
+        {
+            endFrames++;
+            BeginDrawing();
+            DrawEnding(endMode,endId,endMode==1,endMode==1?(void*)&gAirResult:(void*)&gGroundResult);
+            EndDrawing();
+            if(gSelfTest && endFrames==18)
+                TakeScreenshot(TextFormat("%s/shot_%s.png",gShotDir,endMode==1?"endair":"endground"));
+            if(gSelfTest && endFrames>42){ state=(pending>=0)?pending:ST_MENU; }
+            else if(!gSelfTest && (IsKeyPressed(KEY_SPACE)||IsKeyPressed(KEY_ENTER)||IsMouseButtonPressed(0)))
+                state=ST_MENU;
+        }
+    }
+
+    Sfx_Unload();
+    Scene_Unload();
+    CloseWindow();
+    return 0;
+}

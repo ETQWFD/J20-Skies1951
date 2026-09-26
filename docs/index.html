@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>长空·1951 · J-20 Skies Over Korea</title>
+<meta name="description" content="跨平台3D抗美援朝纪念射击游戏：驾驶歼-20空战，或以志愿军步兵冲锋。Windows / Android(64位+32位)，纯C与raylib开源。">
+<style>
+:root{
+  --bg:#0e131c; --panel:#161e2b; --ink:#e8ecf3; --mut:#9fb0c6;
+  --gold:#e8c679; --red:#b5382f; --line:#28324a; --accent:#4f86c6;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;line-height:1.7;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+header{padding:72px 0 40px;background:radial-gradient(1200px 500px at 70% -10%,#1b2b44 0,transparent 60%),linear-gradient(180deg,#101723,#0e131c);border-bottom:1px solid var(--line)}
+.eyebrow{color:var(--gold);letter-spacing:.35em;font-size:13px;margin-bottom:14px}
+h1{font-size:clamp(34px,6vw,60px);font-weight:800;letter-spacing:.04em}
+.sub{color:var(--mut);margin-top:14px;font-size:clamp(15px,2.2vw,19px)}
+.badges{margin-top:22px;display:flex;flex-wrap:wrap;gap:10px}
+.tag{border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:13px;color:var(--mut);background:#11182799}
+.cta{margin-top:30px;display:flex;flex-wrap:wrap;gap:14px}
+.btn{display:inline-block;padding:13px 26px;border-radius:10px;font-weight:700;font-size:16px;border:1px solid transparent;transition:.15s}
+.btn.primary{background:var(--red);color:#fff}
+.btn.primary:hover{background:#cf4538}
+.btn.ghost{border-color:var(--line);color:var(--ink);background:#ffffff0a}
+.btn.ghost:hover{border-color:var(--gold)}
+section{padding:54px 0;border-bottom:1px solid var(--line)}
+h2{font-size:clamp(22px,3.4vw,30px);margin-bottom:8px;color:#fff}
+.lead{color:var(--mut);margin-bottom:26px}
+.grid{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+.card h3{color:var(--gold);font-size:17px;margin-bottom:8px}
+.card p{color:var(--mut);font-size:14.5px}
+.shots{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.shots figure{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.shots img{width:100%;display:block}
+.shots figcaption{padding:10px 14px;color:var(--mut);font-size:13.5px}
+table{width:100%;border-collapse:collapse;font-size:14.5px}
+th,td{border:1px solid var(--line);padding:9px 12px;text-align:left}
+th{background:#111827;color:var(--gold);font-weight:600}
+.note{background:#1a1410;border:1px solid #4a341c;border-radius:12px;padding:18px 20px;color:#e7d3ac;font-size:14.5px}
+.memo{font-size:clamp(18px,3vw,26px);color:var(--gold);text-align:center;letter-spacing:.2em;padding:10px 0 4px}
+footer{padding:40px 0 60px;color:var(--mut);font-size:13.5px;text-align:center}
+code{background:#0a0e15;padding:2px 7px;border-radius:6px;color:#cfe0f5;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="eyebrow">抗 美 援 朝 · 纪 念 作 品</div>
+    <h1>长空 · 1951</h1>
+    <div class="sub">J-20 SKIES OVER KOREA — 跨平台 3D 战争射击游戏<br>驾驶歼-20 搏击长空，或作为志愿军步兵冲锋夺旗。</div>
+    <div class="badges">
+      <span class="tag">Windows EXE（x86_64）</span>
+      <span class="tag">Android APK（arm64-v8a + armeabi-v7a）</span>
+      <span class="tag">Linux 可编译</span>
+      <span class="tag">纯 C · raylib · 开源</span>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/latest">⬇ 下载最新版（GitHub Release）</a>
+      <a class="btn ghost" href="https://github.com/ETQWFD/J20-Skies1951">查看源码仓库</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>玩法</h2>
+    <p class="lead">两种模式，多种结局。空战对地支援、夺取制空权；陆战与 AI 战友协同夺取高地，胜负与牺牲均有历史结语。</p>
+    <div class="grid">
+      <div class="card"><h3>空战 · 歼-20</h3><p>追尾飞行、失速与返航；机炮、锁定导弹、投弹，迎击多波 F-86 与地面装甲纵队。</p></div>
+      <div class="card"><h3>陆战 · 志愿军队列</h3><p>第一人称冲锋，莫辛-纳甘步枪与 AKM，机瞄狙击镜、真实上跳后坐力，与战友冲锋夺旗。</p></div>
+      <div class="card"><h3>程序化战场</h3><p>柏林噪声生成雪山、森林与海面；冷光朝阳、距离雾、火焰爆炸曳光粒子与程序化音效。</p></div>
+      <div class="card"><h3>本地 AI</h3><p>敌机、步兵、战友均为内置状态机，无需联网，安装即玩。</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>游戏画面</h2>
+    <p class="lead">以下为程序实际运行截图。</p>
+    <div class="shots">
+      <figure><img src="img/menu.png" alt="主菜单"><figcaption>主菜单：铭记历史 · 珍爱和平 · 吾辈自强</figcaption></figure>
+      <figure><img src="img/air.png" alt="空战"><figcaption>空战：歼-20 追击 F-86，雪山与海面</figcaption></figure>
+      <figure><img src="img/ground.png" alt="陆战"><figcaption>陆战：夺取前方高地，第一人称持枪</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>下载与安装</h2>
+    <p class="lead">前往 <a href="https://github.com/ETQWFD/J20-Skies1951/releases/latest">Release 页面</a> 下载。</p>
+    <div class="grid">
+      <div class="card"><h3>Windows</h3><p>下载 <code>J20_Skies1951.exe</code>，64 位绿色单文件，双击运行（会带一个控制台日志窗）。</p></div>
+      <div class="card"><h3>Android</h3><p>下载 <code>J20_Skies1951.apk</code>，一个包同时支持 64 位与 32 位，需 Android 7.0 及以上。</p></div>
+      <div class="card"><h3>微信传包提示损坏？</h3><p>微信会把 APK 改名 <code>.apk.1</code>。请下载 <code>安卓安装包.zip</code>，解压后再安装，或把文件名末尾的 <code>.1</code> 删除。</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>操作</h2>
+    <table>
+      <tr><th>平台</th><th>动作</th><th>按键 / 触屏</th></tr>
+      <tr><td rowspan="3">电脑</td><td>陆战移动 / 视角 / 射击</td><td>WASD / 鼠标 / 左键；右键开镜，P 暂停</td></tr>
+      <tr><td>空战姿态 / 油门</td><td>方向键与 QE / W S；空格机炮，F 导弹，B 投弹，H 返航</td></tr>
+      <tr><td>切枪 / 装填</td><td>1、2 / R</td></tr>
+      <tr><td rowspan="2">手机</td><td>移动 / 视角</td><td>左下摇杆（上推前进）/ 右半屏拖动（带防误触死区）</td></tr>
+      <tr><td>射击 / 瞄准 / 其它</td><td>“火”射击、“镜”开镜、“弹”“炸”“换”，左上“暂停”</td></tr>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>开源与构建</h2>
+    <p class="lead">游戏为纯 C，基于 raylib（zlib 许可）。仓库提供源码与免 gradle 的安卓出包脚本；引擎源码与各平台预编译库见完整版压缩包（Release 内）。</p>
+    <div class="note">本作是历史纪念与技术演示的可玩原型：AI 为本地状态机，帧率不封顶、取决于硬件；战争双方按历史军服正常呈现，铭记历史、珍爱和平。</div>
+  </div>
+</section>
+
+<section style="border-bottom:none">
+  <div class="wrap">
+    <div class="memo">铭 记 历 史 · 珍 爱 和 平 · 吾 辈 自 强</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    长空·1951 · J-20 Skies Over Korea &nbsp;|&nbsp;
+    <a href="https://github.com/ETQWFD/J20_Skies1951">GitHub 仓库</a> &nbsp;|&nbsp;
+    <a href="https://github.com/ETQWFD/J20-Skies1951/releases/latest">下载 Release</a>
+  </div>
+</footer>
+</body>
+</html>

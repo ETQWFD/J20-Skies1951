@@ -1,0 +1,6 @@
+build/
+third_party/raylib/
+third_party/linux/ third_party/windows/ third_party/android/
+third_party/font/*.o
+*.o *.so *.exe *.apk
+*.zip
