@@ -256,7 +256,11 @@ static int menuLoop(int *go)
             DrawRectangleLinesEx(lb,2,(Color){150,205,255,255});
             CNC("⑤ 局域网联机（同一 WiFi · 创建 / 加入）",GetScreenWidth()/2,540+15,20,(Color){235,242,250,255});
             if(guard<=0 && ((lh&&IsMouseButtonPressed(MOUSE_BUTTON_LEFT))||IsKeyPressed(KEY_FIVE)))
-            { guard=0.4f; Coop_Lobby(); }
+            {
+                guard=0.4f;
+                int lr=Coop_Lobby();           // keeps the UDP socket open on start
+                if(lr==1||lr==2){ sel=ST_GROUND; gScenario=gCoopScenario; }
+            }
         }
         CNC("铭记历史 · 珍爱和平 · 吾辈自强",GetScreenWidth()/2,GetScreenHeight()-86,18,(Color){255,225,180,220});
         CNC("鼠标点击或按 1/2/3/4 选择 · ESC 退出",GetScreenWidth()/2,GetScreenHeight()-52,15,(Color){210,215,225,210});
@@ -269,13 +273,15 @@ static int menuLoop(int *go)
 
 int main(int argc,char**argv)
 {
-    int devLobby=0, devCoop=0;
+    int devLobby=0, devCoop=0, devBattle=0;
     for(int i=1;i<argc;i++)
     {
         if(strcmp(argv[i],"--selftest")==0) gSelfTest=1;
         else if(strcmp(argv[i],"--lobby")==0){ gSelfTest=1; devLobby=1; } // dev: screenshot LAN lobby
         else if(strcmp(argv[i],"--coophost")==0){ devCoop=1; }
         else if(strcmp(argv[i],"--coopclient")==0){ devCoop=2; }
+        else if(strcmp(argv[i],"--bhost")==0){ gSelfTest=1; devBattle=1; }
+        else if(strcmp(argv[i],"--bclient")==0){ gSelfTest=1; devBattle=2; }
         else if(strcmp(argv[i],"--night")==0) gScenario=1; // dev: preview Chosin night theme
         else if(strcmp(argv[i],"--shotdir")==0 && i+1<argc){ strncpy(gShotDir,argv[++i],sizeof(gShotDir)-1); }
         else if(strcmp(argv[i],"--vsync")==0) gUncap=0;
@@ -337,6 +343,33 @@ int main(int argc,char**argv)
         Net_Close(); Scene_Unload(); CloseWindow(); return gCoopId>=1||devCoop==1?0:2;
     }
 
+    if(devBattle)   // two-process host-authoritative ground battle test
+    {
+        if(devBattle==1)
+        {
+            gCoopRole=1; gCoopId=0; gScenario=0;
+            if(!Net_Host()){ printf("NETBATTLE host bind fail\n"); }
+        }
+        else
+        {
+            gCoopRole=2; Coop_BeginSearch();
+            int joined=0; float tmr=0;
+            while(tmr<3.5f && !WindowShouldClose())
+            {
+                float dt=GetFrameTime(); tmr+=dt;
+                BeginDrawing(); ClearBackground(BLACK); EndDrawing();
+                CoopRoom rooms[4]; int nr=Coop_PollRooms(rooms,4,dt);
+                if(!joined && nr>0){ Coop_Join(&rooms[0].addr); joined=1; }
+                if(joined && Coop_JoinStatus()==1){ gScenario=gCoopScenario; break; }
+            }
+            printf("NETBATTLE client joined=%d id=%d sc=%d\n",joined,gCoopId,gCoopScenario);
+        }
+        int om=0,en=0;
+        Ground_Run(&om,&en);
+        Net_Close(); gCoopRole=0;
+        Scene_Unload(); CloseWindow(); return 0;
+    }
+
     int state=ST_MENU, endMode=1, endId=0, pending=-1, endFrames=0;
     while(!WindowShouldClose())
     {
@@ -366,6 +399,7 @@ int main(int argc,char**argv)
         else if(state==ST_GROUND)
         {
             int m,e; Ground_Run(&m,&e);
+            if(gCoopRole!=0){ Net_Close(); gCoopRole=0; gCoopId=0; }
             if(m==0){state=ST_MENU;continue;}
             endMode=2;endId=e;state=ST_END;pending=gSelfTest?ST_HELP:-1;endFrames=0;
         }

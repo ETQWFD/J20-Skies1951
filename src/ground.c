@@ -1,6 +1,8 @@
 // ground.c - PVA infantry first-person assault on a Korean ridge
 #include "common.h"
 #include "noise.h"
+#include "coop.h"
+#include "bnet.h"
 
 GroundResult gGroundResult={0};
 
@@ -8,6 +10,21 @@ GroundResult gGroundResult={0};
 #define NP 12   // friendly PVA
 typedef struct { Vector3 pos; float ang,hp,fireCd,vy; int alive,state,cryT,cry; } Man;
 static Man foes[NF], pals[NP];
+
+// ---- LAN co-op storage (host-authoritative); methods defined further below ----
+typedef struct {
+    int      active, alive, jumps;
+    NetAddr  addr;
+    Vector3  pos, vel;
+    float    yaw, pitch, hp, fireCd, reload, reloadTake, lastSeen;
+    int      weapon, mag[2], reserve[2];
+    uint32_t lastSeq;
+} Avatar;
+static Avatar av[BNET_MAXPLY];          // index = player id (1..3)
+static BnWorld gSnap;                   // latest world snapshot (client)
+static int   gHaveSnap=0, gNetWin=0, gAvatarShots=0;
+static int   avThreat(const Vector3*chest,Vector3*outPos);
+
 
 // persistent blood pools left on the snow/earth where men fall
 #define MAXBLD 80
@@ -258,9 +275,12 @@ static void updateFoes(float dt)
     for(int i=0;i<NF;i++) if(foes[i].alive)
     {
         Man*m=&foes[i];
+        // nearest real threat: host player or any connected co-op comrade
+        Vector3 threat; int tAv = (gCoopRole==1)?avThreat(&(Vector3){m->pos.x,m->pos.y+1.5f,m->pos.z},&threat):-1;
+        if(gCoopRole!=1) threat=eye;
         Vector3 chest=(Vector3){m->pos.x,m->pos.y+1.5f,m->pos.z};
-        float d=vlen(vsub(eye,chest));
-        bool see = d<430 && los(chest,eye);
+        float d=vlen(vsub(threat,chest));
+        bool see = d<430 && los(chest,threat);
         if(see) m->state=1;
         Vector3 move={0};
         if(m->state==0) // advance toward the line, then dig in
@@ -270,7 +290,7 @@ static void updateFoes(float dt)
         }
         else if(m->state==1)
         {
-            m->ang=angTo(m->pos,eye);
+            m->ang=angTo(m->pos,threat);
             // occasional sidestep
             Vector3 side=(Vector3){cosf(m->ang),0,sinf(m->ang)};
             move=vmul(side, sinf(frame*0.6f+i)*3.0f);
@@ -280,9 +300,13 @@ static void updateFoes(float dt)
                 m->fireCd=frand(0.9f,2.0f);
                 Vector3 mzc=(Vector3){m->pos.x,m->pos.y+1.45f,m->pos.z};
                 for(int b=0;b<3;b++)
-                    FX_Tracer(mzc,vadd(eye,v3(frand(-2.5f,2.5f),frand(-2.5f,2.5f),frand(-2.5f,2.5f))),(Color){255,190,110,255},0.07f);
+                    FX_Tracer(mzc,vadd(threat,v3(frand(-2.5f,2.5f),frand(-2.5f,2.5f),frand(-2.5f,2.5f))),(Color){255,190,110,255},0.07f);
                 float chance=clampf(0.42f-d*0.0009f,0.03f,0.3f);
-                if(frand(0,1)<chance){ hp-=frand(3.0f,8.0f); dmgCd=4.0f; }
+                if(frand(0,1)<chance)
+                {
+                    if(tAv>=1){ av[tAv].hp-=frand(3.0f,8.0f); if(av[tAv].hp<=0){av[tAv].hp=0;av[tAv].alive=0;} }
+                    else { hp-=frand(3.0f,8.0f); dmgCd=4.0f; }
+                }
                 // enemy fire also cuts down charging comrades
                 int pi=-1; float pd=1e9f;
                 for(int k=0;k<NP;k++) if(pals[k].alive)
@@ -394,10 +418,11 @@ static void updatePlayer(float dt)
     }
     else
     {
-        // automated verification: march north and fire
+        // automated verification: march north and fire. In co-op the host stays
+        // dug in so the charging client avatar stays visible in its screenshot.
         yaw=0;
         if(frame%30==0){mag[weapon]=10;shoot();}
-        eye.z-=22*dt;
+        if(gCoopRole!=1) eye.z-=22*dt;
     }
     if(reload>0){ reload-=dt*60.0f;
         if(reload<=0){ reload=0; mag[weapon]+=reloadTake; reserve[weapon]-=reloadTake; reloadTake=0; } }
@@ -683,6 +708,264 @@ static void drawTalk(void)
     }
 }
 
+// =====================================================================
+// LAN co-op (host-authoritative). See bnet.h for the wire protocol.
+//   (Avatar storage is declared near the top of this file.)
+static Vector3 avDir(const Avatar*a)
+{ float cp=cosf(a->pitch), sp=sinf(a->pitch);
+  return (Vector3){cp*sinf(a->yaw),sp,-cp*cosf(a->yaw)}; }
+
+static void avatarSpawn(Avatar*a)
+{
+    a->active=1; a->alive=1; a->jumps=0;
+    float ox=frand(-6,6);
+    a->pos=(Vector3){ox,0,178+frand(-6,6)}; a->pos.y=Terrain_Height(a->pos.x,a->pos.z)+1.68f;
+    a->vel=v3(0,0,0); a->yaw=0; a->pitch=-0.05f; a->hp=100;
+    a->fireCd=0; a->reload=0; a->reloadTake=0; a->lastSeen=0; a->weapon=0;
+    a->mag[0]=5; a->mag[1]=30; a->reserve[0]=0; a->reserve[1]=70; a->lastSeq=0;
+}
+
+// hitscan for a remote client's avatar (host resolves all damage)
+static void avatarShoot(Avatar*a)
+{
+    if(a->reload>0||a->fireCd>0||!a->alive)return;
+    int w=a->weapon;
+    if(w>=2)return;                       // melee/grenade over network: v1.6 not synced
+    if(a->mag[w]<=0)
+    {
+        if(a->reserve[w]>0 && a->reload<=0)
+        { int need=(w==0?5:30)-a->mag[w]; int take=need<a->reserve[w]?need:a->reserve[w];
+          a->reloadTake=(float)take; a->reload=w==0?75.0f:100.0f; }
+        return;
+    }
+    a->mag[w]--; a->fireCd=w==0?0.75f:0.10f; gAvatarShots++;
+    Vector3 eye=a->pos;
+    Vector3 d=vnorm(vadd(avDir(a),v3(frand(-.012f,.012f),frand(-.012f,.012f),frand(-.012f,.012f))));
+    Vector3 mz=vadd(eye,vmul(d,0.8f));
+    FX_Muzzle(mz);
+    float gT=terrainRayT(eye,d);
+    int hit=-1,zone=1; float best=gT; Vector3 hp_={0};
+    const float zy[3]={1.76f,1.22f,0.45f}, zr[3]={0.33f,0.62f,0.55f};
+    for(int i=0;i<NF;i++)if(foes[i].alive)
+        for(int z=0;z<3;z++)
+    {
+        Vector3 c=(Vector3){foes[i].pos.x,foes[i].pos.y+zy[z],foes[i].pos.z};
+        Vector3 to=vsub(c,eye); float t=vdot(to,d);
+        if(t<=0)continue; Vector3 cp=vadd(eye,vmul(d,t));
+        if(vlen(vsub(cp,c))<zr[z] && t<best){best=t;hit=i;zone=z;hp_=cp;}
+    }
+    if(hit>=0)
+    {
+        FX_Tracer(mz,hp_,(Color){255,235,170,255},0.06f);
+        float dmg=(w==0)?(zone==0?110.0f:50.0f):(zone==0?85.0f:(zone==1?26.0f:16.0f));
+        foes[hit].hp-=dmg; if(foes[hit].hp<=0)killFoe(hit,0);
+    }
+    else FX_Tracer(mz,vadd(eye,vmul(d,best)),(Color){255,225,150,255},0.05f);
+}
+
+static void applyAvatar(Avatar*a,const BnInput*in,float dt)
+{
+    if(!a->alive)return;
+    a->yaw=in->yaw; a->pitch=clampf(in->pitch,-1.5f,1.5f);
+    if(in->weapon<4)a->weapon=in->weapon;
+    float spd=(in->bits&BN_B_SPRINT)?8.5f:5.2f;
+    Vector3 f=flatFwd(a->yaw), r=(Vector3){cosf(a->yaw),0,sinf(a->yaw)};
+    float fx=in->ax/100.0f, fy=in->ay/100.0f;
+    Vector3 wish=vmul(vadd(vmul(f,fy),vmul(r,fx)),spd);
+    a->vel.x=wish.x; a->vel.z=wish.z;
+    a->vel.y-=GRAVITY*dt;
+
+    float feetNow=Terrain_Height(a->pos.x,a->pos.z); const float STEP=0.95f,RAD=0.42f;
+    float nx=a->pos.x+a->vel.x*dt;
+    if(fabsf(a->vel.x)>0.01f){ float h=Terrain_Height(nx+(a->vel.x>0?RAD:-RAD),a->pos.z); if(h<=feetNow+STEP)a->pos.x=nx; }
+    float nz=a->pos.z+a->vel.z*dt;
+    if(fabsf(a->vel.z)>0.01f){ float h=Terrain_Height(a->pos.x,nz+(a->vel.z>0?RAD:-RAD)); if(h<=feetNow+STEP)a->pos.z=nz; }
+    a->pos.y+=a->vel.y*dt;
+    float gy=Terrain_Height(a->pos.x,a->pos.z)+1.68f;
+    if(a->pos.y<gy){a->pos.y=gy; if(a->vel.y<=0){a->vel.y=0;a->jumps=0;}}
+    if(fabsf(a->pos.x)>WORLD_HALF-10)a->pos.x=WORLD_HALF-10;
+    if(fabsf(a->pos.z)>WORLD_HALF-10)a->pos.z=WORLD_HALF-10;
+
+    if(a->fireCd>0)a->fireCd-=dt;
+    if(a->reload>0){ a->reload-=dt*60.0f;
+        if(a->reload<=0){ a->reload=0; a->mag[a->weapon]+=(int)a->reloadTake;
+            a->reserve[a->weapon]-=(int)a->reloadTake; a->reloadTake=0; } }
+    if(in->bits&BN_B_FIRE) avatarShoot(a);
+    a->hp+=6.0f*dt; if(a->hp>100)a->hp=100; if(a->hp<0)a->hp=0;
+}
+
+static int avThreat(const Vector3*chest,Vector3*outPos)
+{
+    int best=-1; float bd=vlen(vsub(eye,*chest));
+    for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active&&av[id].alive)
+    { float d=vlen((Vector3){av[id].pos.x-chest->x,av[id].pos.y-chest->y,av[id].pos.z-chest->z});
+      if(d<bd){bd=d;best=id;} }
+    if(best>=1){ outPos->x=av[best].pos.x; outPos->y=av[best].pos.y; outPos->z=av[best].pos.z; }
+    else *outPos=eye;
+    return best;
+}
+
+static void netHostInit(void)
+{ memset(av,0,sizeof(av)); gAvatarShots=0; }
+
+static void netHostRecv(float dt)
+{
+    for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active) av[id].lastSeen+=dt;
+    NetAddr from; char buf[NET_MAXPKT]; int n;
+    while((n=Net_Poll(&from,buf,sizeof buf))>0)
+    {
+        // still answer lobby discovery / joins while the battle runs (late join)
+        if(n>=3 && buf[0]=='S'&&buf[1]=='K'&&(buf[2]=='D'||buf[2]=='J'))
+        {
+            if(buf[2]=='D')
+            { char r[64]; int k=snprintf(r,sizeof r,"SKH|%d|%d",gScenario,0); Net_Send(&from,r,k); }
+            else
+            { int id=1; while(id<BNET_MAXPLY&&av[id].active)id++;
+              if(id<BNET_MAXPLY){ char r[64]; int k=snprintf(r,sizeof r,"SKA|%d|%d",id,gScenario); Net_Send(&from,r,k); } }
+            continue;
+        }
+        BnInput in;
+        if(!Bn_DecodeInput(buf,n,&in))continue;
+        int id=in.id; if(id<1||id>=BNET_MAXPLY)continue;
+        Avatar*a=&av[id];
+        if(!a->active){ avatarSpawn(a); a->addr=from; }
+        a->addr=from; a->lastSeen=0;
+        if(in.seq<=a->lastSeq)continue; a->lastSeq=in.seq;
+        // edge events handled immediately
+        if((in.bits&BN_B_JUMP)&&a->jumps==0&&a->alive){ a->vel.y=7.2f; a->jumps=1; }
+        if((in.bits&BN_B_RELOAD)&&a->reload<=0&&a->weapon<2)
+        { int w=in.weapon<2?in.weapon:a->weapon;
+          if(a->reserve[w]>0){ int need=(w==0?5:30)-a->mag[w]; int take=need<a->reserve[w]?need:a->reserve[w];
+            a->reloadTake=(float)take; a->reload=w==0?75.0f:100.0f; } }
+        applyAvatar(a,&in,dt);
+    }
+    for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active&&av[id].lastSeen>5.0f) av[id].active=0;
+}
+
+static void netHostSend(int win)
+{
+    BnWorld w; memset(&w,0,sizeof w);
+    w.scenario=(uint8_t)gScenario; w.win=(uint8_t)win; w.planted=(uint8_t)planted;
+    w.foeN=NF; w.palN=NP;
+    int pn=0;
+    w.players[pn++]=(BnPlayer){0,eye.x,eye.y,eye.z,(int16_t)(yaw*1000),(int8_t)hp,1,(uint8_t)weapon};
+    for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active)
+        w.players[pn++]=(BnPlayer){(uint8_t)id,av[id].pos.x,av[id].pos.y,av[id].pos.z,
+            (int16_t)(av[id].yaw*1000),(int8_t)av[id].hp,(uint8_t)(av[id].alive?1:0),(uint8_t)av[id].weapon};
+    w.plyN=(uint8_t)pn; w.foesAlive=(int16_t)foesAlive(); w.palsAlive=(int16_t)palsAlive();
+    for(int i=0;i<NF;i++) w.foes[i]=(BnSoldier){foes[i].pos.x,foes[i].pos.z,(int16_t)(foes[i].ang*1000),
+        (int8_t)foes[i].hp,(uint8_t)(foes[i].alive?1:(foes[i].state==9?2:0))};
+    for(int i=0;i<NP;i++) w.pals[i]=(BnSoldier){pals[i].pos.x,pals[i].pos.z,(int16_t)(pals[i].ang*1000),
+        (int8_t)pals[i].hp,(uint8_t)(pals[i].alive?1:(pals[i].state==9?2:0))};
+    static char pkt[NET_MAXPKT];
+    int len=Bn_EncodeWorld(pkt,sizeof pkt,&w);
+    for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active)
+    {
+        BnWorld per=w; per.myHp=(int8_t)av[id].hp; per.myState=(uint8_t)(av[id].alive?1:0);
+        int l2=Bn_EncodeWorld(pkt,sizeof pkt,&per);
+        Net_Send(&av[id].addr,pkt,l2>0?l2:len);
+    }
+}
+
+// ---- client side ----
+static void netClientSend(void)
+{
+    BnInput in; memset(&in,0,sizeof in);
+    in.id=(uint8_t)gCoopId;
+    in.yaw=yaw; in.pitch=pitch; in.weapon=(uint8_t)weapon;
+    // derive a -100..100 move vector from the same controls as updatePlayer
+    Vector3 f=flatFwd(yaw), r=(Vector3){cosf(yaw),0,sinf(yaw)};
+    Vector3 wish={0};
+    if(!gSelfTest)
+    {
+        if(IsKeyDown(KEY_W))wish=vadd(wish,f);
+        if(IsKeyDown(KEY_S))wish=vsub(wish,f);
+        if(IsKeyDown(KEY_D))wish=vadd(wish,r);
+        if(IsKeyDown(KEY_A))wish=vsub(wish,r);
+        wish=vadd(wish,vmul(vadd(vmul(f,Touch_AxisY()),vmul(r,Touch_AxisX())),1.0f));
+    }
+    else { wish=f; }       // automated test marches north
+    float spd=IsKeyDown(KEY_LEFT_SHIFT)?8.5f:5.2f; (void)spd;
+    Vector3 nf=vnorm(f), nr=vnorm(r);
+    float fy=vdot(wish,nf)/5.2f, fx=vdot(wish,nr)/5.2f;
+    if(fy>1)fy=1; if(fy<-1)fy=-1; if(fx>1)fx=1; if(fx<-1)fx=-1;
+    in.ay=(int8_t)(fy*100); in.ax=(int8_t)(fx*100);
+    uint8_t bits=0;
+    if(!gSelfTest)
+    {
+#if defined(PLATFORM_ANDROID)
+        if(Touch_FireHeld())bits|=BN_B_FIRE;
+        if(Touch_ADSHeld())bits|=BN_B_ADS;
+#else
+        if(IsMouseButtonDown(MOUSE_BUTTON_LEFT)||Touch_FireHeld())bits|=BN_B_FIRE;
+        if(IsMouseButtonDown(MOUSE_BUTTON_RIGHT)||Touch_ADSHeld())bits|=BN_B_ADS;
+#endif
+        if(IsKeyDown(KEY_LEFT_SHIFT))bits|=BN_B_SPRINT;
+        if(IsKeyPressed(KEY_SPACE)||Touch_ActPressed())bits|=BN_B_JUMP;
+        if(IsKeyPressed(KEY_R)||Touch_BPressed())bits|=BN_B_RELOAD;
+    }
+    else { bits|=BN_B_FIRE; }
+    in.bits=bits;
+    static uint32_t s_seq=0; in.seq=++s_seq;
+    char buf[64]; int len=Bn_EncodeInput(buf,&in);
+    Net_Send(Coop_HostAddr(),buf,len);
+}
+
+static void netClientRecv(void)
+{
+    NetAddr from; char buf[NET_MAXPKT]; int n;
+    while((n=Net_Poll(&from,buf,sizeof buf))>0)
+    {
+        if(!Bn_DecodeWorld(buf,n,&gSnap))continue;
+        gHaveSnap=1; gNetWin=gSnap.win;
+        for(int i=0;i<NF;i++)
+        {
+            foes[i].pos.x=gSnap.foes[i].x; foes[i].pos.z=gSnap.foes[i].z;
+            foes[i].pos.y=Terrain_Height(foes[i].pos.x,foes[i].pos.z);
+            foes[i].ang=gSnap.foes[i].angC/1000.0f;
+            foes[i].hp=gSnap.foes[i].hp;
+            foes[i].alive=(gSnap.foes[i].state==1)?1:0;
+            foes[i].state=(gSnap.foes[i].state==2)?9:0;
+        }
+        for(int i=0;i<NP;i++)
+        {
+            pals[i].pos.x=gSnap.pals[i].x; pals[i].pos.z=gSnap.pals[i].z;
+            pals[i].pos.y=Terrain_Height(pals[i].pos.x,pals[i].pos.z);
+            pals[i].ang=gSnap.pals[i].angC/1000.0f;
+            pals[i].hp=gSnap.pals[i].hp;
+            pals[i].alive=(gSnap.pals[i].state==1)?1:0;
+            pals[i].state=(gSnap.pals[i].state==2)?9:0;
+        }
+        planted=gSnap.planted?1:0;
+        if(gSnap.myState==0) hp=0; else hp=(float)gSnap.myHp;
+    }
+}
+
+// draw the other real players (host: joined clients; client: host + peers)
+static void drawNetBodies(void)
+{
+    if(gCoopRole==1)
+    {
+        for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active)
+        {
+            if(av[id].alive) DrawSoldier(av[id].pos,-av[id].yaw,0,1.0f,1);
+            else DrawSoldierDown(av[id].pos,av[id].yaw,0,1.0f);
+        }
+    }
+    else if(gCoopRole==2 && gHaveSnap)
+    {
+        for(int i=0;i<gSnap.plyN;i++)
+        {
+            BnPlayer*p=&gSnap.players[i];
+            if(p->id==(uint8_t)gCoopId)continue;   // never draw yourself
+            Vector3 pp={p->x,p->y-1.68f,p->z};
+            float ya=p->yawC/1000.0f;
+            if(p->state==1) DrawSoldier(pp,-ya,0,1.0f,1);
+            else DrawSoldierDown(pp,ya,0,1.0f);
+        }
+    }
+}
+
 void Ground_Run(int *outMode,int *outEnding)
 {
     memset(foes,0,sizeof(foes)); memset(pals,0,sizeof(pals));
@@ -697,6 +980,8 @@ void Ground_Run(int *outMode,int *outEnding)
     foesKilled=0; hitMark=0; dmgCd=0; holdT=0; timeAlive=0; frame=0; pvel=v3(0,0,0); ads=0; paused=0; kickP=kickY=gunKick=0; headMsgT=0;
     cam=(Camera3D){0}; cam.fovy=72; cam.projection=CAMERA_PERSPECTIVE; cam.up=(Vector3){0,1,0};
     jumps=0; introT=gScenario==1?7.0f:3.5f;
+    if(gCoopRole==1) netHostInit();
+    if(gCoopRole==2){ gHaveSnap=0; gNetWin=0; }
     DisableCursor();
     Sfx_Bugle();
 
@@ -730,13 +1015,24 @@ void Ground_Run(int *outMode,int *outEnding)
 
         int frozen=(paused||talkOpen||celebrate>0);
         if(!frozen){
-            updatePlayer(dt); updateFoes(dt); updatePals(dt);
-            FX_Update(dt); Env_Update(dt); if(introT>0)introT-=dt;
-            // distant, off-screen battle: random booms and smoke over the ridge
-            if(!gSelfTest){ ambT-=dt;
-                if(ambT<=0){ ambT=frand(4,9); Sfx_Boom(0.22f);
-                    Vector3 wp=(Vector3){frand(-500,500),0,frand(-700,-500)}; wp.y=Terrain_Height(wp.x,wp.z)+20;
-                    FX_Smoke(wp,2.2f); } }
+            if(gCoopRole==2)
+            {
+                // client: predict own walk, send intent, receive authoritative world
+                updatePlayer(dt); netClientSend(); netClientRecv();
+                FX_Update(dt); Env_Update(dt); if(introT>0)introT-=dt;
+            }
+            else
+            {
+                if(gCoopRole==1) netHostRecv(dt);
+                updatePlayer(dt); updateFoes(dt); updatePals(dt);
+                if(gCoopRole==1) netHostSend(celebrate>0?1:0);
+                FX_Update(dt); Env_Update(dt); if(introT>0)introT-=dt;
+                // distant, off-screen battle: random booms and smoke over the ridge
+                if(!gSelfTest){ ambT-=dt;
+                    if(ambT<=0){ ambT=frand(4,9); Sfx_Boom(0.22f);
+                        Vector3 wp=(Vector3){frand(-500,500),0,frand(-700,-500)}; wp.y=Terrain_Height(wp.x,wp.z)+20;
+                        FX_Smoke(wp,2.2f); } }
+            }
         }
         else if(celebrate>0)
         {
@@ -754,6 +1050,8 @@ void Ground_Run(int *outMode,int *outEnding)
                 else planted=1;
             } else planted=1;
             if(planted&&!bugled){bugled=1;Sfx_Bugle();}
+            if(gCoopRole==1) netHostSend(1);
+            if(gCoopRole==2){ netClientSend(); netClientRecv(); }
             FX_Update(dt); Env_Update(dt);
             if(celebrate<=0) celebrate=0;
         }
@@ -810,6 +1108,7 @@ void Ground_Run(int *outMode,int *outEnding)
         if(woundOn) DrawSoldierDown(wound.pos,wound.ang,0,1.0f);
         for(int i=0;i<NF;i++)if(foes[i].alive) DrawSoldier(foes[i].pos,-foes[i].ang,1,1.0f,1);
         for(int i=0;i<NP;i++)if(pals[i].alive) DrawSoldier(pals[i].pos,-pals[i].ang,0,1.0f,1);
+        drawNetBodies();   // other real co-op players
         // grenade in flight + charging arc preview
         if(gre.on) DrawPart(P_SPHERE,C_DARK,MatrixIdentity(),MPart(gre.p,(Vector3){1,0,0},0,(Vector3){0.2f,0.24f,0.2f}));
         if(greCharging)
@@ -837,9 +1136,14 @@ void Ground_Run(int *outMode,int *outEnding)
         {
         float dz=eye.z-OBJV.z, dx=eye.x-OBJV.x;
         bool nearObj=(dx*dx+dz*dz)<70*70;
+        if(gCoopRole==1) for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active&&av[id].alive)
+        { float ax=av[id].pos.x-OBJV.x, az=av[id].pos.z-OBJV.z; if(ax*ax+az*az<70*70) nearObj=true; }
         int fa=foesAlive();
+        // client: victory is declared by the host snapshot
+        if(gCoopRole==2 && gHaveSnap && gNetWin==1 && celebrate<=0)
+        { celebrate=3.4f; planted=1; }
         if(hp<=0){ endId=(foesKilled>=5||(eye.z< -250))?(gScenario==1?206:203):(gScenario==1?206:204); break; }
-        if(celebrate<=0)
+        if(gCoopRole!=2 && celebrate<=0)
         {
             if(nearObj && fa<=3) holdT+=dt; else holdT=0;
             if((fa==0 && nearObj) || holdT>=5)
@@ -848,12 +1152,35 @@ void Ground_Run(int *outMode,int *outEnding)
                 if(pals[0].alive) planter=0;                       // squad leader first
                 else { int ids[NP],k=0; for(int i=0;i<NP;i++)if(pals[i].alive)ids[k++]=i;
                        planter=k?ids[irand(0,k-1)]:-1; }            // else a random survivor
-                if(gSelfTest){endId=(fa==0)?(gScenario==1?205:201):(gScenario==1?205:202);break;}
+                if(gSelfTest && gCoopRole==0){endId=(fa==0)?(gScenario==1?205:201):(gScenario==1?205:202);break;}
             }
         }
         else if(celebrate>0 && (celebrate-dt)<=0)
         { endId=(fa==0)?(gScenario==1?205:201):(gScenario==1?205:202); break; }
-        if(gSelfTest && frame>=420){ endId=201; break; }
+        // dev co-op verification: run ~13s, screenshot around 9s, then report
+        if(gSelfTest && gCoopRole!=0)
+        {
+            static int shotNet=0;
+            if(!shotNet && timeAlive>9.0f)
+            { shotNet=1; TakeScreenshot(TextFormat("%s/shot_net%s.png",gShotDir,gCoopRole==1?"host":"client")); }
+            if(timeAlive>13.0f)
+            {
+                if(gCoopRole==1)
+                {
+                    int moved=0; for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active&&fabsf(av[id].pos.z-178)>15)moved=1;
+                    printf("NETHOST_DONE active=%d moved=%d avatarShots=%d foesAlive=%d\n",
+                        (av[1].active||av[2].active||av[3].active)?1:0,moved,gAvatarShots,fa);
+                }
+                else
+                {
+                    int hostBody=0; for(int i=0;i<gSnap.plyN;i++) if(gSnap.players[i].id==0)hostBody=1;
+                    printf("NETCLIENT_DONE haveSnap=%d foesAlive=%d hostBody=%d myHp=%d win=%d\n",
+                        gHaveSnap?1:0, gHaveSnap?gSnap.foesAlive:-1, hostBody, (int)hp, gNetWin);
+                }
+                endId=201; break;
+            }
+        }
+        if(gSelfTest && gCoopRole==0 && frame>=420){ endId=201; break; }
         }
     }
     EnableCursor();

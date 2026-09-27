@@ -10,6 +10,7 @@ NetAddr gCoopHost;
 
 typedef struct { NetAddr addr; int id; float lastSeen; } Peer;
 static Peer sPeers[NET_MAXPEERS]; static int sPeerN=0;
+static int sStart=0, sStartSc=0;   // client received host "battle start"
 
 static void peersRefresh(float dt)
 {
@@ -59,6 +60,17 @@ void Coop_HostPoll(float dt)
 
 int Coop_PeerCount(void){ return sPeerN; }
 
+const NetAddr* Coop_HostAddr(void){ return &gCoopHost; }
+int Coop_PeerAddr(int id, NetAddr*out)
+{ for(int i=0;i<sPeerN;i++) if(sPeers[i].id==id){ *out=sPeers[i].addr; return 1; } return 0; }
+void Coop_HostStartBattle(void)
+{
+    char b[24]; int k=snprintf(b,sizeof b,"SKG|%d",gCoopScenario);
+    for(int i=0;i<sPeerN;i++) Net_Send(&sPeers[i].addr,b,k);
+}
+void Coop_Reset(void)
+{ Net_Close(); sPeerN=0; sStart=0; gCoopRole=0; gCoopId=0; }
+
 // ---------------- client discovery ----------------
 static CoopRoom sRooms[NET_MAXPEERS]; static int sRoomN=0;
 static float sDiscT=1.0f, sJoinT=0; static int sJoinId=-1; static NetAddr sJoinAddr;
@@ -73,7 +85,8 @@ static void roomTouch(const NetAddr*a,const char*name,int sc,int players)
       r->pingMs=0; r->lastSeen=0; snprintf(r->name,sizeof r->name,"主机房间 %d",sc+1); }
 }
 int Coop_BeginSearch(void)
-{ sRoomN=0; sDiscT=1.0f; sJoinT=0; sJoinId=-1; return Net_Client(); }
+{ sRoomN=0; sDiscT=1.0f; sJoinT=0; sJoinId=-1; sStart=0; return Net_Client(); }
+int Coop_ClientStart(int*sc){ if(sStart){ if(sc)*sc=sStartSc; return 1; } return 0; }
 
 int Coop_PollRooms(CoopRoom*out,int cap,float dt)
 {
@@ -83,7 +96,8 @@ int Coop_PollRooms(CoopRoom*out,int cap,float dt)
     while((n=Net_Poll(&f,b,sizeof b-1))>0)
     {
         b[n]=0; int sc=0,pl=0;
-        if(sscanf(b,"SKH|%d|%d",&sc,&pl)>=1)
+        if(strncmp(b,"SKG",3)==0){ int g=0; if(sscanf(b,"SKG|%d",&g)==1){ sStart=1; sStartSc=g; } }
+        else if(sscanf(b,"SKH|%d|%d",&sc,&pl)>=1)
         { roomTouch(&f,"host",sc,pl);
           if(sJoinId>=0 && Net_AddrEq(&f,&sJoinAddr)) { /* ack handled below */ } }
         int id=-1,sc2=0;
@@ -154,25 +168,28 @@ int Coop_Lobby(void)
             if(btn("② 创建主机 · 长津湖夜战",cx,318,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=1; if(Net_Host())phase=1; }
             if(btn("③ 搜索并加入主机",cx,386,440,58)){ gCoopRole=2; if(Coop_BeginSearch())phase=2; }
             if(btn("④ 返回主菜单",cx,468,440,54)){ Net_Close();gCoopRole=0; EndDrawing(); return 0; }
-            CNC("v1.5 联调大厅：当前用于验证手机与电脑能否在同一局域网互相发现、加入",cx,GetScreenHeight()-70,16,(Color){170,178,194,220});
-            CNC("战场协同作战（一起打同一批敌人）将在连通验证通过后的下一版开启",cx,GetScreenHeight()-44,16,(Color){170,178,194,220});
+            CNC("局域网协同作战：同一 WiFi/热点下，一端创建主机，另一端搜索加入，再由主机开始战斗",cx,GetScreenHeight()-70,16,(Color){170,178,194,220});
+            CNC("进入同一战场、看到彼此、一起打同一批敌人（主机权威）",cx,GetScreenHeight()-44,16,(Color){170,178,194,220});
         }
         else if(phase==1)
         {
             Coop_HostPoll(dt);
-            panelTitle(gCoopScenario==1?"主机已创建 · 长津湖夜战":"主机已创建 · 山地攻坚",120);
+            panelTitle(gCoopScenario==1?"主机已创建 · 长津湖夜战":"主机已创建 · 山地攻坚",110);
             int cx=GetScreenWidth()/2;
-            CNC("在另一台设备上点“搜索并加入”即可看到本房间",cx,200,20,(Color){215,220,232,255});
-            CNC(TextFormat("在线战友：%d 人（含主机）",Coop_PeerCount()+1),cx,260,26,(Color){120,230,150,255});
-            int y=320;
+            CNC("在另一台设备上点“搜索并加入”；人齐后点下面的“开始战斗”",cx,180,20,(Color){215,220,232,255});
+            CNC(TextFormat("在线战友：%d 人（含主机）",Coop_PeerCount()+1),cx,232,26,(Color){120,230,150,255});
+            int y=286;
             for(int i=0;i<sPeerN;i++){ CNC(TextFormat("战友 %d   %s",sPeers[i].id,sPeers[i].addr.ip),cx,y,18,(Color){200,210,225,255}); y+=28; }
-            if(btn("④ 返回",cx,GetScreenHeight()-120,300,52)){ Net_Close();gCoopRole=0; EndDrawing(); return 0; }
+            if(btn("▶ 开始战斗",cx,GetScreenHeight()-170,360,56)){ Coop_HostStartBattle(); EndDrawing(); return 1; }
+            if(btn("④ 返回",cx,GetScreenHeight()-100,300,48)){ Net_Close();gCoopRole=0; EndDrawing(); return 0; }
         }
         else
         {
             CoopRoom rooms[NET_MAXPEERS];
             int nr=Coop_PollRooms(rooms,NET_MAXPEERS,dt);
             keepAlive(dt);
+            int sc=0;
+            if(gCoopId>=1 && Coop_ClientStart(&sc)){ gCoopScenario=sc; EndDrawing(); return 2; }
             panelTitle("搜索局域网内的主机",110);
             int cx=GetScreenWidth()/2, y=200;
             if(gCoopId>=1)
@@ -181,7 +198,7 @@ int Coop_Lobby(void)
                 if(js==1)
                 {
                     CNC(TextFormat("已加入主机！你的战友编号：%d",gCoopId),cx,250,26,(Color){120,230,150,255});
-                    CNC("同一局域网发现/加入成功——联机链路正常",cx,292,19,(Color){205,215,230,255});
+                    CNC("联机链路正常，等待主机点击“开始战斗”进入同一战场…",cx,292,19,(Color){205,215,230,255});
                 }
             }
             else
