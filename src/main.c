@@ -79,12 +79,17 @@ static const char* gndPara(int id)
     }
 }
 static const char* HISTORY[]={
-"【铭记 · 为什么是1951】",
-"1950年6月，朝鲜战争爆发。以美国为主的'联合国军'越过三八线，战火烧到鸭绿江边，新中国的安全受到严重威胁。",
-"1950年10月，中国人民志愿军跨过鸭绿江——抗美援朝，保家卫国。",
-"云山、长津湖、松骨峰、上甘岭……志愿军在严寒、饥饿与劣势装备下，把世界上最强的军队挡回了三八线。",
-"1950年底起，年轻的人民空军在朝鲜北部上空奋勇作战，那片空域后来被对手称作'米格走廊'。",
-"1953年7月27日，《朝鲜停战协定》签署。这一战，打出了新中国的国威与军威，换来了几十年和平建设的外部环境。",
+"【重返战场 · 为什么是1950—1953】",
+"这是一款以抗美援朝为题材的纪念游戏。它不是纪录片，但每一关都指向一段真实的历史。",
+"1950年6月，朝鲜战争爆发。随后以美国为主的'联合国军'介入并越过三八线，战火烧到鸭绿江边，新中国安全受到严重威胁。",
+"1950年10月，中国人民志愿军跨过鸭绿江——抗美援朝，保家卫国。武器落后、补给艰难，战士们靠双脚和意志在冰与火中穿插。",
+"【长津湖 · 冰雕连】1950年冬，志愿军第九兵团在零下三四十摄氏度的盖马高原设伏，冻伤减员巨大。",
+"有的连队在雪地里保持着冲锋的队形，直到战斗结束仍紧握钢枪，化作阵地上的'冰雕'。这就是游戏中夜战一关的由来。",
+"新兴里、下碣隅里、三炸水门桥……志愿军在长津湖重创美军王牌部队，收复了三八线以北广大地区。",
+"【松骨峰 · 上甘岭】松骨峰阻击战、上甘岭坑道战，志愿军在绝对火力劣势下死守阵地，打出了'最可爱的人'。",
+"【米格走廊】年轻的人民空军1950年底起在朝鲜北部上空奋勇作战，那片空域后来被对手称作'米格走廊'。",
+"1953年7月27日，《朝鲜停战协定》签署。这一战打出了新中国的国威与军威，换来了长期和平建设的外部环境。",
+"我们用游戏'重返'战场，不是为了歌颂战争，而是为了记住：步枪、棉衣、雪水和生命，是怎样把和平换来的。",
 };
 static const char* DEVNOTE=
 "【关于这款游戏】歼-20'威龙'2011年才首飞，从未参加过那场战争。让它出现在1951年的天空，|是一句'如果当年有我们'的告慰：今天你随手能驾驶的隐身战机，是当年冰雕连、坑道里的战士们做梦也不敢想的东西。|做这款游戏，不是为了宣扬战争，而是希望操作它的人记得——是哪一代人用步枪、棉衣和命，把和平打了下来。|铭记历史，珍爱和平，吾辈自强。";
@@ -180,13 +185,15 @@ static void drawHelp(void)
     "消灭4波F-86并摧毁北方河谷的15个地面目标可得全胜；雷达红点=敌机，黄点=地面目标。",
     "",
     "【陆战 · 志愿军步兵】",
-    "WASD 移动   Shift 冲刺   空格 跳跃(空中再按一次=二段跳)   鼠标 瞄准   左键 射击",
-    "数字1 莫辛-纳甘步枪(高伤害拉栓)   数字2 AKM突击步枪(连发)   R 装填",
-    "跟随战友冲锋，夺取前方高地上的红旗阵地，坚守即胜；注意土工作业与敌军火力。",
+    "WASD 移动   Shift 冲刺   空格 单跳/跃进(步兵只能跳一次)   鼠标 瞄准   左键 攻击",
+    "1 莫辛-纳甘步枪(共5发,拉栓,爆头一枪致命,腿/躯干约半血)   2 AKM突击步枪(共100发)",
+    "3 大刀(近战劈砍)   0 拳头   R 装填(余弹打光即空仓,无法再补)   右键 机瞄狙击镜",
+    "每人1颗手雷：长按 M 蓄力、松手按抛物线投出(手机点 雷)；靠近伤员按 E/话 听他的遗言。",
+    "敌头顶红条、战友头顶蓝条；跟随战友冲锋夺下高地。胜利时班长(牺牲则随机一名战友)冲上去插红旗、吹冲锋号。",
     "",
     "【其它】",
     "每次启动都会实时编译GLSL光照着色器、用柏林噪声重新生成地形；帧率不封顶，实际帧率取决于硬件。",
-    "本作为单机程序化原型，无任何外部资源依赖；语音/无线电AI、VR、安卓APK为可扩展项，详见随附README。",
+    "本作为单机程序化原型，无外部资源依赖；局域网/跨网联机、可驾驶载具、写实PBR材质为后续版本，详见随附README。",
     };
     for(unsigned i=0;i<sizeof(L)/sizeof(L[0]);i++)
     { Color c = ((unsigned char)L[i][0]==0xE3)?(Color){255,200,120,255}:(Color){220,224,232,255}; CN(L[i],x,y,17,c); y+=25; }
@@ -220,16 +227,18 @@ static int menuLoop(int *go)
                {{0,0,420,64},"③ 长津湖 · 冰雕连(夜战)",KEY_THREE,ST_GROUND,1},
                {{0,0,420,64},"④ 操作说明 / 历史",KEY_FOUR,ST_HELP,0} };
     int frame=0, sel=-1;
+    float guard=0.40f;   // swallow the tap/click that carried over from a sub-screen
     while(!WindowShouldClose())
     {
         float dt=GetFrameTime(); frame++; FX_Update(dt); Env_Update(dt);
+        if(guard>0)guard-=dt;
         Vector2 m=GetMousePosition();
         BeginDrawing();
         ClearBackground((Color){150,180,210,255});
         drawMenuBg();
         DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){6,10,18,120});
         CNC("长 空 · 1951",GetScreenWidth()/2,104,58,(Color){255,232,150,255});
-        CNC("J-20 SKIES OVER KOREA · 抗美援朝 假想作战",GetScreenWidth()/2,170,21,(Color){225,230,240,235});
+        CNC("J-20 SKIES OVER KOREA · 抗美援朝 · 重返战场",GetScreenWidth()/2,170,21,(Color){225,230,240,235});
         for(int i=0;i<4;i++)
         {
             b[i].r.x=GetScreenWidth()/2-210; b[i].r.y=252+i*72;
@@ -237,8 +246,8 @@ static int menuLoop(int *go)
             DrawRectangleRec(b[i].r,hov?(Color){180,60,45,220}:(Color){20,28,40,200});
             DrawRectangleLinesEx(b[i].r,2,(Color){255,210,140,255});
             CNC(b[i].name,GetScreenWidth()/2,(int)b[i].r.y+17,22,(Color){240,240,245,255});
-            if(hov && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ sel=b[i].to; gScenario=b[i].scn; }
-            if(IsKeyPressed(b[i].key)){ sel=b[i].to; gScenario=b[i].scn; }
+            if(guard<=0 && hov && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ sel=b[i].to; gScenario=b[i].scn; }
+            if(guard<=0 && IsKeyPressed(b[i].key)){ sel=b[i].to; gScenario=b[i].scn; }
         }
         CNC("铭记历史 · 珍爱和平 · 吾辈自强",GetScreenWidth()/2,GetScreenHeight()-86,18,(Color){255,225,180,220});
         CNC("鼠标点击或按 1/2/3/4 选择 · ESC 退出",GetScreenWidth()/2,GetScreenHeight()-52,15,(Color){210,215,225,210});

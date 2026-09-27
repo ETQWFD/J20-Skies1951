@@ -124,6 +124,7 @@ static const Color PAL[C_PAL_COUNT] = {
     [C_GLASS]    = {40,62,88,255},
     [C_MARK]     = {200,40,36,255},
     [C_JETSILVER]= {96,104,118,255},
+    [C_BLOOD]    = {112,14,14,210},
 };
 
 // ---------------------------------------------------------------- math helpers
@@ -341,8 +342,8 @@ void DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp)
 {
     Quaternion q=QuaternionFromAxisAngle((Vector3){0,1,0}, yaw);
     Matrix M=root(feet,q,scale);
-    int body = uniform==0 ? C_PVA : C_GI;
-    int leg  = uniform==0 ? C_DARKOLIVE : C_DARKOLIVE;
+    int body = uniform==1 ? C_GI : (uniform==2 ? C_WHITE : C_PVA);
+    int leg  = uniform==2 ? C_WHITE : C_DARKOLIVE;
     Quaternion aim = QuaternionFromAxisAngle((Vector3){1,0,0}, rifleUp? -78*DEG2R:12*DEG2R);
     DrawPart(P_BOX,leg,M,MPart((Vector3){-0.13f,0.42f,0},(Vector3){1,0,0},0,(Vector3){0.17f,0.84f,0.2f}));
     DrawPart(P_BOX,leg,M,MPart((Vector3){ 0.13f,0.42f,0},(Vector3){1,0,0},0,(Vector3){0.17f,0.84f,0.2f}));
@@ -352,12 +353,28 @@ void DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp)
     DrawPart(P_BOX,body,M,MPartQ((Vector3){-0.36f,1.42f,-0.02f},aim,(Vector3){0.15f,0.62f,0.17f}));
     DrawPart(P_BOX,body,M,MPartQ((Vector3){ 0.36f,1.42f,-0.02f},aim,(Vector3){0.15f,0.62f,0.17f}));
     DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){0,1.74f,0},(Vector3){0,1,0},0,(Vector3){0.34f,0.38f,0.34f}));
-    if (uniform==0) DrawPart(P_SPHERE,C_KHAKI,M,MPart((Vector3){0,1.86f,0.0f},(Vector3){1,0,0},0,(Vector3){0.4f,0.16f,0.4f})); // cotton cap
-    else            DrawPart(P_SPHERE,C_HELMET,M,MPart((Vector3){0,1.87f,-0.01f},(Vector3){1,0,0},0,(Vector3){0.46f,0.22f,0.46f}));
+    if (uniform==1) DrawPart(P_SPHERE,C_HELMET,M,MPart((Vector3){0,1.87f,-0.01f},(Vector3){1,0,0},0,(Vector3){0.46f,0.22f,0.46f}));
+    else            DrawPart(P_SPHERE,(uniform==2?C_WHITE:C_KHAKI),M,MPart((Vector3){0,1.86f,0.0f},(Vector3){1,0,0},0,(Vector3){0.4f,0.16f,0.4f})); // cotton cap
     // rifle
     Quaternion rq = QuaternionFromAxisAngle((Vector3){1,0,0}, rifleUp?-80*DEG2R:10*DEG2R);
     DrawPart(P_BOX,C_BLACK,M,MPartQ((Vector3){0.14f,1.4f,-0.4f},rq,(Vector3){0.07f,0.07f,1.0f}));
     DrawPart(P_BOX,C_WOOD,M,MPartQ((Vector3){0.14f,1.42f,-0.05f},rq,(Vector3){0.09f,0.1f,0.42f}));
+}
+
+// fallen soldier: body lying flat on its back along local +Z
+void DrawSoldierDown(Vector3 feet, float yaw, int uniform, float scale)
+{
+    Quaternion q=QuaternionFromAxisAngle((Vector3){0,1,0}, yaw);
+    Matrix M=root(feet,q,scale);
+    int body = uniform==1 ? C_GI : (uniform==2 ? C_WHITE : C_PVA);
+    int leg  = uniform==2 ? C_WHITE : C_DARKOLIVE;
+    DrawPart(P_BOX,leg,M,MPart((Vector3){-0.13f,0.18f,-0.62f},(Vector3){1,0,0},0,(Vector3){0.17f,0.26f,1.0f}));
+    DrawPart(P_BOX,leg,M,MPart((Vector3){ 0.13f,0.18f,-0.62f},(Vector3){1,0,0},0,(Vector3){0.17f,0.26f,1.0f}));
+    DrawPart(P_BOX,body,M,MPart((Vector3){0,0.24f,0.22f},(Vector3){1,0,0},0,(Vector3){0.54f,0.32f,0.78f}));
+    DrawPart(P_BOX,body,M,MPart((Vector3){-0.34f,0.2f,0.1f},(Vector3){1,0,0},0,(Vector3){0.15f,0.18f,0.7f}));
+    DrawPart(P_BOX,body,M,MPart((Vector3){ 0.34f,0.2f,0.1f},(Vector3){1,0,0},0,(Vector3){0.15f,0.18f,0.7f}));
+    DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){0,0.26f,0.8f},(Vector3){0,1,0},0,(Vector3){0.3f,0.28f,0.3f}));
+    if(uniform==1) DrawPart(P_SPHERE,C_HELMET,M,MPart((Vector3){0,0.34f,0.8f},(Vector3){1,0,0},0,(Vector3){0.36f,0.14f,0.36f}));
 }
 
 // --------------------------------------------------------------- missile / bomb
@@ -463,7 +480,7 @@ void DrawRifleView(Camera3D cam, int type, float kick)
         DrawPart(P_BOX,C_STEEL,M,MPart((Vector3){0,0.09f,-1.45f},(Vector3){1,0,0},0,(Vector3){0.02f,0.09f,0.04f})); // front sight
         sMuzzle=vadd(grip, vmul(f,2.05f));
     }
-    else
+    else if(type==1)
     {
         // AKM assault rifle: stamped receiver, long barrel, wood handguard,
         // gas tube, front post, slanted muzzle brake, curved banana magazine.
@@ -479,6 +496,24 @@ void DrawRifleView(Camera3D cam, int type, float kick)
         DrawPart(P_BOX,C_DARK, M,MPart((Vector3){0,-0.20f,-0.15f},(Vector3){1,0,0},0,(Vector3){0.10f,0.34f,0.16f}));
         DrawPart(P_BOX,C_DARK, M,MPart((Vector3){0,-0.40f,-0.28f},(Vector3){1,0,0}, 10*DEG2R,(Vector3){0.095f,0.26f,0.15f}));
         sMuzzle=vadd(grip, vmul(f,2.0f));
+    }
+    else if(type==2)
+    {
+        // 大刀 (Chinese broadsword): wrapped grip, steel guard, long single-edged blade
+        DrawPart(P_BOX,C_WOOD, M,MPart((Vector3){0,-0.02f,0.30f},(Vector3){1,0,0},0,(Vector3){0.07f,0.07f,0.34f})); // grip
+        DrawPart(P_BOX,C_YELLOW, M,MPart((Vector3){0,0.02f,0.10f},(Vector3){1,0,0},0,(Vector3){0.26f,0.05f,0.06f})); // guard
+        DrawPart(P_BOX,C_JETSILVER,M,MPart((Vector3){0,0.02f,-0.62f},(Vector3){1,0,0},0,(Vector3){0.10f,0.03f,1.5f})); // blade
+        DrawPart(P_BOX,C_JETSILVER,M,MPart((Vector3){0,0.02f,-1.42f},(Vector3){1,0,0},-4*DEG2R,(Vector3){0.085f,0.03f,0.34f})); // curved tip
+        sMuzzle=vadd(grip, vmul(f,1.7f));
+    }
+    else
+    {
+        // bare fists: two forearms + hands held low and forward
+        DrawPart(P_BOX,C_PVA, M,MPart((Vector3){-0.14f,-0.08f,-0.18f},(Vector3){1,0,0},0,(Vector3){0.16f,0.16f,0.5f}));
+        DrawPart(P_BOX,C_PVA, M,MPart((Vector3){ 0.14f,-0.08f,-0.18f},(Vector3){1,0,0},0,(Vector3){0.16f,0.16f,0.5f}));
+        DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){-0.14f,-0.10f,-0.46f},(Vector3){1,0,0},0,(Vector3){0.13f,0.13f,0.13f}));
+        DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){ 0.14f,-0.10f,-0.46f},(Vector3){1,0,0},0,(Vector3){0.13f,0.13f,0.13f}));
+        sMuzzle=vadd(grip, vmul(f,1.2f));
     }
 }
 Vector3 RifleMuzzle(Camera3D cam, int type){ (void)cam;(void)type; return sMuzzle; }
@@ -539,6 +574,13 @@ void FX_FlakBurst(Vector3 p)
 void FX_Muzzle(Vector3 p)
 {
     P k={0}; k.p=p; k.v=(Vector3){0,0,0}; k.life=k.max=0.07f; k.size=1.1f; k.grow=1.5f; k.tex=1; k.col=(Color){255,230,150,255}; spawn(k);
+}
+void FX_Blood(Vector3 p)
+{
+    for(int i=0;i<14;i++){ P k={0}; k.p=p; float a=frand(0,2*M_PI);
+        k.v=(Vector3){cosf(a)*frand(1,6),frand(2,9),sinf(a)*frand(1,6)};
+        k.life=k.max=frand(0.25f,0.6f); k.size=frand(1.0f,2.6f); k.grow=1.5f;
+        k.tex=0; k.col=(Color){(unsigned char)irand(110,150),(unsigned char)irand(10,22),(unsigned char)irand(10,18),235}; spawn(k);}
 }
 void FX_Tracer(Vector3 a, Vector3 b, Color c, float life)
 {
@@ -623,6 +665,129 @@ void Env_DrawSky2D(void)
         DrawRectangle(0,i*bh,sw,bh+1,c);
     }
 }
+
+// national flag (PRC) and PLA "August 1st" flag, pinned to the upper-left HUD
+static void flagStar(float cx,float cy,float r,Color c)
+{
+    Vector2 v[10];
+    for(int i=0;i<10;i++)
+    {
+        float a=-M_PI/2.0f+i*M_PI/5.0f, rr=(i&1)?r*0.42f:r;
+        v[i]=(Vector2){cx+cosf(a)*rr,cy+sinf(a)*rr};
+    }
+    DrawTriangleFan(v,10,c);
+}
+void DrawCornerFlags(void)
+{
+    int w=54,h=36,x0=104,y=10;
+    Color red=(Color){222,41,16,255}, yel=(Color){255,224,82,255};
+    const char* name[2]={"中华人民共和国","中国人民解放军"};
+    for(int f=0;f<2;f++)
+    {
+        int x=x0+f*(w+12);
+        DrawRectangle(x,y,w,h,red);
+        float cx=x+w*0.25f, cy=y+h*0.35f;
+        flagStar(cx,cy,h*0.17f,yel);
+        if(f==0)
+        {
+            static const float sp[4][2]={{0.42f,0.13f},{0.50f,0.30f},{0.50f,0.50f},{0.42f,0.64f}};
+            for(int i=0;i<4;i++) flagStar(x+w*sp[i][0],y+h*sp[i][1],h*0.06f,yel);
+        }
+        else
+        {
+            DrawTextEx(GameFont(),"八一",(Vector2){cx-11,cy+h*0.18f},12,0,yel);
+        }
+        Vector2 sz=MeasureTextEx(GameFont(),name[f],10,1);
+        DrawTextEx(GameFont(),name[f],(Vector2){x+(w-sz.x)*0.5f,(float)y+h+2},10,1,(Color){255,235,200,235});
+    }
+}
+
+// ------------------------------------------------- 3D waving national flag
+static Texture2D texFlag3D[2]={{0}};
+
+static int ptInPoly(float px,float py,const float*vx,const float*vy,int n)
+{
+    int in=0;
+    for(int i=0,j=n-1;i<n;j=i++)
+        if(((vy[i]>py)!=(vy[j]>py)) &&
+           (px < (vx[j]-vx[i])*(py-vy[i])/(vy[j]-vy[i]+1e-9f)+vx[i])) in=!in;
+    return in;
+}
+
+// plot a five-point star centered (cx,cy) radius R, rotation rot, into RGBA image
+static void plotStar(unsigned char*d,int W,int H,float cx,float cy,float R,float rot,Color c)
+{
+    float vx[10],vy[10];
+    for(int i=0;i<10;i++)
+    {
+        float a=rot-M_PI*0.5f+i*((float)M_PI/5.0f);
+        float rr=(i%2==0)?R:R*0.42f;
+        vx[i]=cx+cosf(a)*rr; vy[i]=cy+sinf(a)*rr;
+    }
+    int x0=(int)(cx-R), x1=(int)(cx+R), y0=(int)(cy-R), y1=(int)(cy+R);
+    for(int y=y0;y<=y1;y++)for(int x=x0;x<=x1;x++)
+    {
+        if(x<0||y<0||x>=W||y>=H)continue;
+        if(ptInPoly(x+0.5f,y+0.5f,vx,vy,10))
+        { int o=(y*W+x)*4; d[o]=c.r;d[o+1]=c.g;d[o+2]=c.b;d[o+3]=255; }
+    }
+}
+
+static Texture2D FlagTexture3D(int kind)
+{
+    if(texFlag3D[kind].id) return texFlag3D[kind];
+    const int W=150,H=100;
+    Image img=GenImageColor(W,H,(Color){222,41,16,255});
+    unsigned char*d=img.data;
+    Color yel=(Color){255,222,90,255};
+    float ux=W*0.20f, uy=H*0.32f, ur=H*0.18f;
+    plotStar(d,W,H,ux,uy,ur,0.0f,yel);
+    if(kind==0)
+    {
+        // four small stars on the national flag, points aimed toward the big one
+        const float sp[4][2]={{0.36f,0.16f},{0.45f,0.32f},{0.45f,0.52f},{0.36f,0.66f}};
+        for(int i=0;i<4;i++){ float sx=W*sp[i][0],sy=H*sp[i][1];
+            float rot=atan2f(uy-sy,ux-sx)+M_PI*0.5f;
+            plotStar(d,W,H,sx,sy,H*0.062f,rot,yel); }
+    }
+    else
+    {   // PLA "August 1st" — numerals beside the star
+        ImageDrawText(&img,"81",(int)(ux-10),(int)(uy-12),34,yel);
+    }
+    texFlag3D[kind]=LoadTextureFromImage(img);
+    UnloadImage(img);
+    return texFlag3D[kind];
+}
+
+void DrawWavingFlag(Camera3D cam,Vector3 base,float yaw,int kind,float t,float poleH)
+{
+    // pole
+    DrawPart(P_CYL,C_DARK,MatrixIdentity(),
+        MPart((Vector3){base.x,base.y+poleH*0.5f,base.z},(Vector3){1,0,0},0,(Vector3){0.10f,poleH,0.10f}));
+    DrawPart(P_SPHERE,C_YELLOW,MatrixIdentity(),
+        MPart((Vector3){base.x,base.y+poleH+0.12f,base.z},(Vector3){1,0,0},0,(Vector3){0.16f,0.16f,0.16f}));
+    // cloth as vertical billboard strips; outer edge flutters more
+    Texture2D tex=FlagTexture3D(kind);
+    const int N=9;
+    const float FW=4.2f,FH=2.7f, sw=FW/N;
+    Vector3 dF=(Vector3){cosf(yaw),0,-sinf(yaw)};
+    Vector3 attach=(Vector3){base.x,base.y+poleH-FH*0.5f-0.05f,base.z};
+    BeginBlendMode(BLEND_ALPHA);
+    for(int i=0;i<N;i++)
+    {
+        float frac=(float)(i+0.5f)/N;
+        float flut=sinf(t*5.5f-i*0.55f)*0.10f*frac;
+        float bulge=cosf(t*4.0f-i*0.5f)*0.16f*frac;
+        Vector3 pos=(Vector3){attach.x+dF.x*(sw*(i+0.5f))+dF.x*bulge,
+                              attach.y+flut,
+                              attach.z+dF.z*(sw*(i+0.5f))+dF.z*bulge};
+        Rectangle src=(Rectangle){(float)i*tex.width/N,0,(float)tex.width/N+1,(float)tex.height};
+        DrawBillboardPro(cam,tex,src,pos,(Vector3){0,1,0},
+            (Vector2){sw*1.08f,FH},(Vector2){sw*0.54f,FH*0.5f},0,WHITE);
+    }
+    EndBlendMode();
+}
+
 void Env_Draw(Camera3D cam)
 {
     Vector3 sunPos=vadd(cam.position, vmul(vnorm(SUN_DIR),-6800.0f));
@@ -649,7 +814,7 @@ void Env_Draw(Camera3D cam)
 
 // ---------------------------------------------------------------- procedural SFX
 #include "raylib.h"
-static Sound sGun,sBoom,sFlak,sBugle,sEngine;
+static Sound sGun,sBoom,sFlak,sBugle,sEngine,sFoot;
 static int audioOk=0, engineOn=0;
 static Wave makeWave(int frames, void(*fill)(short*,int,float))
 {
@@ -674,6 +839,8 @@ static void fBugle(short*b,int n,float sr)
 }
 static void fEng(short*b,int n,float sr){ float lp=0; for(int i=0;i<n;i++){float ph=fmodf(i*70.0f/sr,1.0f);float saw=ph*2-1;
     lp=lp*0.9f+(nz()*0.5f+saw*0.5f)*0.1f; b[i]=(short)(lp*5000);} }
+static void fFoot(short*b,int n,float sr){ float lp=0; for(int i=0;i<n;i++){float t=i/sr;float e=expf(-t*22);lp=lp*0.5f+nz()*0.5f;
+    float v=e*lp*0.7f; b[i]=(short)(v*9000);} }
 
 void Sfx_Load(void)
 {
@@ -686,13 +853,15 @@ void Sfx_Load(void)
     w=makeWave((int)(22050*0.28f),fFlak); sFlak=LoadSoundFromWave(w); UnloadWave(w);
     w=makeWave((int)(22050*1.7f),fBugle); sBugle=LoadSoundFromWave(w); UnloadWave(w);
     w=makeWave(22050,fEng); sEngine=LoadSoundFromWave(w); UnloadWave(w);
-    SetSoundVolume(sBoom,0.9f); SetSoundVolume(sGun,0.55f); SetSoundVolume(sFlak,0.5f); SetSoundVolume(sBugle,0.7f);
+    w=makeWave((int)(22050*0.13f),fFoot); sFoot=LoadSoundFromWave(w); UnloadWave(w);
+    SetSoundVolume(sBoom,0.9f); SetSoundVolume(sGun,0.55f); SetSoundVolume(sFlak,0.5f); SetSoundVolume(sBugle,0.7f); SetSoundVolume(sFoot,0.4f);
 }
 void Sfx_Unload(void){ if(!audioOk)return; if(engineOn)StopSound(sEngine); CloseAudioDevice(); }
 void Sfx_Gun(void){ if(audioOk)PlaySound(sGun); }
 void Sfx_Boom(float v){ if(audioOk){SetSoundVolume(sBoom,clampf(v,0.1f,1.0f));PlaySound(sBoom);} }
 void Sfx_Flak(void){ if(audioOk)PlaySound(sFlak); }
 void Sfx_Bugle(void){ if(audioOk)PlaySound(sBugle); }
+void Sfx_Foot(void){ if(audioOk)PlaySound(sFoot); }
 void Sfx_Engine(float th, int on)
 {
     if(!audioOk)return;

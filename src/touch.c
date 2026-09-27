@@ -16,15 +16,18 @@ typedef struct {
 static int   s_mode=0;
 static float s_axisX=0, s_axisY=0;
 static float s_lookDX=0, s_lookDY=0;
-static Btn   bFire,bAct,bB,bSw,bAds,bPause;
+static Btn   bFire,bAct,bB,bSw,bAds,bPause,bTalk,bGre;
 static int   px[MAXT], py[MAXT], pvalid[MAXT];
 static float sW,sH;
 
 static int inside(float x,float y,Btn*b){ float dx=x-b->bx,dy=y-b->by; return dx*dx+dy*dy<=b->br*b->br; }
 static int insideRect(float x,float y,float x0,float y0,float w,float h){ return x>=x0&&x<=x0+w&&y>=y0&&y<=y0+h; }
 
-static int latchAct=0,latchB=0,latchSw=0,latchPause=0;
+static int latchAct=0,latchB=0,latchSw=0,latchPause=0,latchTalk=0,latchGre=0;
 static int started=0;
+static int s_lastN=0;            // touch count at end of previous frame
+static int s_menuTap=0;          // a brand-new touch began this frame
+static float s_menuX=0,s_menuY=0;
 
 // pause-menu buttons (fraction of screen), shared by hit-test and drawing
 static int pmRect(float*rx,float*ry,float*rw,float*rh,int which)
@@ -48,8 +51,10 @@ void Touch_Update(int mode)
         latchB    = bB.held    && !bB.prev;
         latchSw   = bSw.held   && !bSw.prev;
         latchPause= bPause.held&& !bPause.prev;
+        latchTalk = bTalk.held && !bTalk.prev;
+        latchGre  = bGre.held  && !bGre.prev;
     } else { started=1; }
-    bAct.prev=bAct.held; bB.prev=bB.held; bSw.prev=bSw.held; bPause.prev=bPause.held;
+    bAct.prev=bAct.held; bB.prev=bB.held; bSw.prev=bSw.held; bPause.prev=bPause.held; bTalk.prev=bTalk.held; bGre.prev=bGre.held;
 
     // 2) (re)place geometry without destroying held/prev
     bFire.bx=0.86f*sW; bFire.by=0.74f*sH; bFire.br=0.105f*sH; bFire.label="火";
@@ -57,11 +62,18 @@ void Touch_Update(int mode)
     bB.bx   =0.86f*sW;  bB.by=0.50f*sH;  bB.br=0.070f*sH;   bB.label="炸";
     bSw.bx  =0.72f*sW;  bSw.by=0.67f*sH; bSw.br=0.060f*sH;  bSw.label="换";
     bAds.bx =0.72f*sW;  bAds.by=0.51f*sH; bAds.br=0.062f*sH; bAds.label="镜";
+    bTalk.bx=0.585f*sW; bTalk.by=0.85f*sH; bTalk.br=0.058f*sH; bTalk.label="话";
+    bGre.bx =0.585f*sW; bGre.by =0.70f*sH; bGre.br =0.058f*sH; bGre.label="雷";
+
+    // a brand-new touch this frame (used by the pause overlay so one tap works)
+    int nNow=GetTouchPointCount();
+    s_menuTap=(nNow>0 && s_lastN==0);
+    if(s_menuTap){ Vector2 t0=GetTouchPosition(0); s_menuX=t0.x; s_menuY=t0.y; }
 
     // 3) reset this frame's classification (fire re-classified each frame too)
-    bFire.held=0; bAct.held=0; bB.held=0; bSw.held=0; bAds.held=0; bPause.held=0;
+    bFire.held=0; bAct.held=0; bB.held=0; bSw.held=0; bAds.held=0; bPause.held=0; bTalk.held=0; bGre.held=0;
 
-    int n=GetTouchPointCount();
+    int n=nNow;
     float stickDx=0,stickDy=0,stickOn=0;
     s_lookDX=0; s_lookDY=0;
 
@@ -83,6 +95,8 @@ void Touch_Update(int mode)
         else if(inside(x,y,&bB))    bB.held=1;
         else if(inside(x,y,&bAds))  bAds.held=1;
         else if(inside(x,y,&bSw))   bSw.held=1;
+        else if(mode==1 && inside(x,y,&bTalk)) bTalk.held=1;
+        else if(mode==1 && inside(x,y,&bGre))  bGre.held=1;
         else if(mode==1 && pvalid[k])
         {
             // dead-zone: a tap or tiny jitter must not swing the view
@@ -93,6 +107,7 @@ void Touch_Update(int mode)
         px[k]=(int)x; py[k]=(int)y; pvalid[k]=1;
     }
     s_prevTouchN=n;
+    s_lastN=n;
     for(int k=n;k<MAXT;k++) pvalid[k]=0;
     s_axisX=stickOn?stickDx:0; s_axisY=stickOn?stickDy:0;
 }
@@ -107,19 +122,24 @@ int   Touch_ActPressed(void){ return latchAct; }
 int   Touch_BPressed(void){ return latchB; }
 int   Touch_SwitchPressed(void){ return latchSw; }
 int   Touch_PausePressed(void){ return latchPause; }
+int   Touch_TalkPressed(void){ return latchTalk; }
+int   Touch_GrePressed(void){ return latchGre; }
 int   Touch_IsTouch(void){ return 1; }
 
-// returns 1 = resume, 2 = quit to menu (fires on a fresh touch-press / mouse click)
+// one fresh tap this frame, in screen pixels (for the pause overlay)
+int Touch_PauseTap(float*x,float*y)
+{
+    if(!s_menuTap) return 0;
+    *x=s_menuX; *y=s_menuY; return 1;
+}
+
+// returns 1 = resume, 2 = quit to menu; hit-tests the fresh tap or a mouse click
 int Touch_PauseMenuSelect(void)
 {
-    int n=GetTouchPointCount();
-    int rising=(s_prevTouchN==0 && n>0);
-    int mouse=IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-    float x=-1,y=-1;
-    if(rising){ Vector2 t=GetTouchPosition(0); x=t.x; y=t.y; }
-    else if(mouse){ x=(float)GetMouseX(); y=(float)GetMouseY(); }
-    else { s_prevTouchN=n; return 0; }
-    s_prevTouchN=n;
+    float x=-1,y=-1, hit=0;
+    if(s_menuTap){ x=s_menuX*sW; y=s_menuY*sH; hit=1; }   // tap coords are 0..1
+    else if(IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ x=(float)GetMouseX(); y=(float)GetMouseY(); hit=1; }
+    if(!hit) return 0;
     for(int which=1;which<=2;which++)
     {
         float rx,ry,rw,rh; pmRect(&rx,&ry,&rw,&rh,which);
@@ -181,6 +201,20 @@ void Touch_DrawHUD(void)
         Vector2 sz=MeasureTextEx(GameFont(),"镜",(float)fs,0);
         DrawTextEx(GameFont(),"镜",(Vector2){bAds.bx-sz.x*0.5f,bAds.by-sz.y*0.5f},
                    (float)fs,0,(Color){255,255,255,220});
+        // interact (last words of a wounded comrade)
+        DrawCircleV((Vector2){bTalk.bx,bTalk.by},bTalk.br,fill);
+        DrawCircleLinesV((Vector2){bTalk.bx,bTalk.by},bTalk.br,ring);
+        int fst=(int)(bTalk.br*0.8f);
+        Vector2 szt=MeasureTextEx(GameFont(),"话",(float)fst,0);
+        DrawTextEx(GameFont(),"话",(Vector2){bTalk.bx-szt.x*0.5f,bTalk.by-szt.y*0.5f},
+                   (float)fst,0,(Color){255,230,170,220});
+        // grenade
+        DrawCircleV((Vector2){bGre.bx,bGre.by},bGre.br,fill);
+        DrawCircleLinesV((Vector2){bGre.bx,bGre.by},bGre.br,ring);
+        int fsg=(int)(bGre.br*0.8f);
+        Vector2 szg=MeasureTextEx(GameFont(),"雷",(float)fsg,0);
+        DrawTextEx(GameFont(),"雷",(Vector2){bGre.bx-szg.x*0.5f,bGre.by-szg.y*0.5f},
+                   (float)fsg,0,(Color){255,200,160,220});
     }
     DrawRectangle(12,12,84,56,(Color){0,0,0,80});
     DrawRectangleLines(12,12,84,56,ring);
@@ -202,8 +236,15 @@ int Touch_ActPressed(void){ return 0; }
 int Touch_BPressed(void){ return 0; }
 int Touch_SwitchPressed(void){ return 0; }
 int Touch_PausePressed(void){ return 0; }
+int Touch_TalkPressed(void){ return 0; }
+int Touch_GrePressed(void){ return 0; }
+int Touch_PauseTap(float*x,float*y){ (void)x;(void)y; return 0; }
 int Touch_PauseMenuSelect(void){ return 0; }
 void Touch_DrawPauseMenu(void){}
 int Touch_IsTouch(void){ return 0; }
+
+// desktop: drive pause-menu clicks with a real mouse press, in 0..1 fraction form
+#ifdef SUPPORT_DESKTOP_PAUSE
+#endif
 
 #endif

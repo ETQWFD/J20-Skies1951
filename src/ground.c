@@ -4,14 +4,29 @@
 
 GroundResult gGroundResult={0};
 
-#define NF 16   // US GIs
-#define NP 8    // friendly PVA
+#define NF 40   // US GIs (a dug-in reinforced company line; see release notes on the "division" abstraction)
+#define NP 12   // friendly PVA
 typedef struct { Vector3 pos; float ang,hp,fireCd,vy; int alive,state,cryT,cry; } Man;
 static Man foes[NF], pals[NP];
 
+// persistent blood pools left on the snow/earth where men fall
+#define MAXBLD 80
+typedef struct { Vector3 p; float r,rot; int on; } Bld;
+static Bld blds[MAXBLD];
+static Man wound;                 // one interactable wounded comrade
+static int woundOn=0;
+static int talkOpen=0, talkPage=0;
+static float headMsgT=0;          // "爆头!" feedback
+
 static Vector3 eye, pvel; static float yaw,pitch; static float hp;
-static int weapon, mag[2], reload, foesKilled;
+static int weapon, mag[2], reserve[2], reloadTake, reload, foesKilled;
 static float fireCd;
+static float meleeCd=0, meleeSwing=0;        // broadsword / fists
+static int   grenades=1;                     // one grenade each man carries
+typedef struct { Vector3 p,v; int on,landed; float age; } Gre;
+static Gre gre={0}; static int greCharging=0; static float greHold=0;
+static float stepAcc=0, ambT=0;              // footsteps / distant battle
+static float celebrate=0; static int planter=-1, planted=0, bugled=0; // victory flag ceremony
 static float hitMark, dmgCd, holdT, timeAlive;
 static float ads;        // 0..1 aim-down-sights (right mouse / scope button)
 static int   adsMouseHold=0;
@@ -24,31 +39,57 @@ static Vector3 aimDir(void)
     return (Vector3){cosf(ap)*sinf(ay),sinf(ap),-cosf(ap)*cosf(ay)};
 }
 static Camera3D cam; static int frame=0;
-static int jumps=0;            // airborne jumps used (0 on ground -> allows double jump)
+static int jumps=0;            // ground jumps used (single jump only)
 static float introT=0;         // mission intro banner timer
 static const Vector3 OBJV={0,0,-380.0f};
 static const char* CRIES[]={"冲啊——！","跟我上！","守住阵地！","为了祖国——！","压过去！"};
+
+// fictional last wishes — homage to the frozen company at Chosin, not a quote of a real person
+static const char* TALK[]={
+    "同志……我是三连的……太冷了，腿没知觉了……",
+    "别管我……号一响你们就冲……高地，一定得拿下来……",
+    "替我……看看胜利的那天……祖国——万岁……" };
 
 static float groundAt(Vector3 p){ return Terrain_Height(p.x,p.z); }
 static Vector3 flatFwd(float a){ return (Vector3){sinf(a),0,-cosf(a)}; }
 static float angTo(Vector3 from,Vector3 to){ return atan2f(to.x-from.x, -(to.z-from.z)); }
 
+static void addBlood(Vector3 p)
+{
+    float specs[3]={1.7f,0.8f,0.6f};
+    for(int k=0;k<3;k++)
+        for(int i=0;i<MAXBLD;i++) if(!blds[i].on)
+        {
+            float a=frand(0,2*M_PI), d=frand(0,k?1.2f:0.3f);
+            float x=p.x+cosf(a)*d, z=p.z+sinf(a)*d;
+            blds[i].p=(Vector3){x,Terrain_Height(x,z)+0.03f,z};
+            blds[i].r=specs[k]*frand(0.8f,1.2f); blds[i].rot=frand(0,6.28f); blds[i].on=1;
+            break;
+        }
+}
+
 static void spawnBattle(void)
 {
+    memset(blds,0,sizeof(blds));
     for(int i=0;i<NF;i++)
     {
         float x=frand(-260,260), z=frand(-520,-300);
         foes[i].pos=(Vector3){x,0,z}; foes[i].pos.y=Terrain_Height(x,z);
-        foes[i].ang=frand(-0.4f,0.4f)+M_PI; foes[i].hp=55; foes[i].alive=1;
+        foes[i].ang=frand(-0.4f,0.4f)+M_PI; foes[i].hp=100; foes[i].alive=1;
         foes[i].fireCd=frand(0.5f,2.5f); foes[i].state=0; foes[i].cryT=0;
     }
     for(int i=0;i<NP;i++)
     {
-        float x=(i-(NP-1)*0.5f)*16+frand(-4,4), z=150+frand(-12,12);
+        float x=(i-(NP-1)*0.5f)*14+frand(-4,4), z=150+frand(-12,12);
         pals[i].pos=(Vector3){x,0,z}; pals[i].pos.y=Terrain_Height(x,z);
         pals[i].ang=0; pals[i].hp=100; pals[i].alive=1; pals[i].fireCd=frand(0.6f,2);
         pals[i].state=0; pals[i].cryT=0; pals[i].cry=irand(0,4);
     }
+    // one wounded comrade waiting behind the start line
+    woundOn=1; talkOpen=0; talkPage=0;
+    float wx=-18.0f, wz=118.0f;
+    wound=(Man){0}; wound.pos=(Vector3){wx,Terrain_Height(wx,wz),wz};
+    wound.ang=0.4f; wound.hp=30; wound.alive=1;
 }
 
 static int foesAlive(void){int n=0;for(int i=0;i<NF;i++)if(foes[i].alive)n++;return n;}
@@ -63,16 +104,94 @@ static bool los(Vector3 a,Vector3 b)
 
 static void killFoe(int i,int byPlayer)
 {
-    foes[i].alive=0;
-    Vector3 c=(Vector3){foes[i].pos.x,foes[i].pos.y+1,foes[i].pos.z};
-    FX_Fireball(c,0.35f); FX_Smoke(c,0.5f);
+    if(!foes[i].alive)return;
+    foes[i].alive=0; foes[i].state=9;
+    Vector3 c=(Vector3){foes[i].pos.x,foes[i].pos.y+1.1f,foes[i].pos.z};
+    FX_Blood(c); addBlood(foes[i].pos);
     if(byPlayer)foesKilled++;
 }
 
+static void killPal(int i)
+{
+    if(!pals[i].alive)return;
+    pals[i].alive=0; pals[i].state=9;
+    Vector3 c=(Vector3){pals[i].pos.x,pals[i].pos.y+1.1f,pals[i].pos.z};
+    FX_Blood(c); addBlood(pals[i].pos);
+}
+
+static int magCap(int w){ return w==0?5:30; }   // Mosin 5, AKM 30
+
 static void reloadWeapon(void)
 {
-    if(reload>0)return;
-    reload = weapon==0?75:100; // frames @60fps (~1.25s / ~1.67s)
+    if(reload>0||weapon>=2)return;
+    int need=magCap(weapon)-mag[weapon];
+    int take=need<reserve[weapon]?need:reserve[weapon];
+    if(take<=0) return;                  // no reserve ammunition left: dry, cannot reload
+    reloadTake=take;
+    reload = weapon==0?75:100;          // frames @60fps (~1.25s / ~1.67s)
+}
+
+// broadsword or bare-hand melee strike
+static void melee(void)
+{
+    if(meleeCd>0)return;
+    int blade=(weapon==2);
+    meleeCd=blade?0.55f:0.40f; meleeSwing=1.0f;
+    float reach=blade?2.7f:1.9f, dmg=blade?120.0f:20.0f;
+    Vector3 d=aimDir();
+    int best=-1; float bd=1e9f;
+    for(int i=0;i<NF;i++)if(foes[i].alive)
+    {
+        Vector3 c=(Vector3){foes[i].pos.x,foes[i].pos.y+1.2f,foes[i].pos.z};
+        Vector3 to=vsub(c,eye); float dist=vlen(to);
+        if(dist<reach && dist<bd && vdot(vnorm(to),d)>0.5f){bd=dist;best=i;}
+    }
+    if(best>=0)
+    {
+        Vector3 c=(Vector3){foes[best].pos.x,foes[best].pos.y+1.2f,foes[best].pos.z};
+        FX_Blood(c); Sfx_Foot(); hitMark=0.18f;
+        foes[best].hp-=dmg;
+        if(foes[best].hp<=0)killFoe(best,1);
+    }
+}
+
+// --------------------------------------------------------------------- grenade
+static void throwGrenade(float power)
+{
+    if(grenades<=0||gre.on)return;
+    grenades--;
+    Vector3 d=aimDir();
+    gre.on=1; gre.age=0; gre.landed=0;
+    gre.p=vadd(eye,vadd(vmul(d,0.7f),(Vector3){0,0.15f,0}));
+    gre.v=vadd(vmul(d,9.0f+11.0f*power),(Vector3){0,3.6f+1.6f*power,0});
+}
+static void explodeGrenade(void)
+{
+    FX_Explosion(gre.p,1.7f); FX_Fireball(gre.p,1.1f); FX_Smoke(gre.p,1.4f); Sfx_Boom(0.95f);
+    for(int i=0;i<NF;i++)if(foes[i].alive)
+    {
+        float d=vlen(vsub(foes[i].pos,gre.p));
+        if(d<7.0f){ foes[i].hp-=120.0f*(1.0f-d/7.0f); if(foes[i].hp<=0)killFoe(i,1); }
+    }
+    float pd=vlen((Vector3){eye.x-gre.p.x,0,eye.z-gre.p.z});
+    if(pd<7.5f){ hp-=(1.0f-pd/7.5f)*85.0f; dmgCd=2.0f; }
+    gre.on=0;
+}
+static void updateGrenade(float dt)
+{
+    if(!gre.on)return;
+    gre.age+=dt;
+    gre.v.y-=GRAVITY*dt;
+    gre.p=vadd(gre.p,vmul(gre.v,dt));
+    float gh=Terrain_Height(gre.p.x,gre.p.z)+0.18f;
+    if(gre.p.y<gh)
+    {
+        gre.p.y=gh;
+        if(gre.v.y<0)gre.v.y=-gre.v.y*0.34f;
+        gre.v.x*=0.62f; gre.v.z*0.62f;
+        if(fabsf(gre.v.y)<1.3f)gre.landed=1;
+    }
+    if(gre.age>1.7f||(gre.landed&&gre.age>0.85f))explodeGrenade();
 }
 
 static float terrainRayT(Vector3 o,Vector3 d)
@@ -96,20 +215,28 @@ static void shoot(void)
     Vector3 mz=RifleMuzzle(cam,weapon);
     FX_Muzzle(mz);
     float gT=terrainRayT(eye,d);
-    int hit=-1; float best=gT;
+    int hit=-1, zone=1; float best=gT; Vector3 hitPoint={0};
+    // body zones: head / torso / legs, each its own radius and height
+    const float zy[3]={1.76f,1.22f,0.45f}, zr[3]={0.33f,0.62f,0.55f};
     for(int i=0;i<NF;i++)if(foes[i].alive)
+        for(int z=0;z<3;z++)
     {
-        Vector3 c=(Vector3){foes[i].pos.x,foes[i].pos.y+1.35f,foes[i].pos.z};
+        Vector3 c=(Vector3){foes[i].pos.x,foes[i].pos.y+zy[z],foes[i].pos.z};
         Vector3 to=vsub(c,eye); float t=vdot(to,d);
         if(t<=0)continue; Vector3 cp=vadd(eye,vmul(d,t));
-        if(vlen(vsub(cp,c))<0.95f && t<best){best=t;hit=i;}
+        if(vlen(vsub(cp,c))<zr[z] && t<best){best=t;hit=i;zone=z;hitPoint=cp;}
     }
     if(hit>=0)
     {
-        Vector3 c=(Vector3){foes[hit].pos.x,foes[hit].pos.y+1.35f,foes[hit].pos.z};
-        FX_Tracer(mz,c,(Color){255,235,170,255},0.06f);
-        foes[hit].hp-= weapon==0?62:26;
+        FX_Tracer(mz,hitPoint,(Color){255,235,170,255},0.06f);
+        // sniper: headshot is one-shot kill anywhere on the head; torso/legs take half
+        // AKM: lethal headshot, lighter torso/leg wounds
+        float dmg;
+        if(weapon==0) dmg=(zone==0)?110.0f:50.0f;
+        else          dmg=(zone==0)?85.0f:(zone==1?26.0f:16.0f);
+        foes[hit].hp-=dmg;
         hitMark=0.18f;
+        if(zone==0){ headMsgT=0.6f; Sfx_Flak(); }
         if(foes[hit].hp<=0)killFoe(hit,1);
     }
     else
@@ -156,6 +283,21 @@ static void updateFoes(float dt)
                     FX_Tracer(mzc,vadd(eye,v3(frand(-2.5f,2.5f),frand(-2.5f,2.5f),frand(-2.5f,2.5f))),(Color){255,190,110,255},0.07f);
                 float chance=clampf(0.42f-d*0.0009f,0.03f,0.3f);
                 if(frand(0,1)<chance){ hp-=frand(3.0f,8.0f); dmgCd=4.0f; }
+                // enemy fire also cuts down charging comrades
+                int pi=-1; float pd=1e9f;
+                for(int k=0;k<NP;k++) if(pals[k].alive)
+                {
+                    Vector3 pc=(Vector3){pals[k].pos.x,pals[k].pos.y+1.4f,pals[k].pos.z};
+                    float dd=vlen(vsub(pc,chest));
+                    if(dd<pd && dd<340 && los(chest,pc)){pd=dd;pi=k;}
+                }
+                if(pi>=0 && frand(0,1)<chance*1.2f)
+                {
+                    Vector3 pc=(Vector3){pals[pi].pos.x,pals[pi].pos.y+1.3f,pals[pi].pos.z};
+                    FX_Tracer(mzc,pc,(Color){255,190,110,255},0.07f);
+                    pals[pi].hp-=frand(14.0f,34.0f);
+                    if(pals[pi].hp<=0) killPal(pi);
+                }
             }
         }
         else
@@ -235,9 +377,19 @@ static void updatePlayer(float dt)
         pitch=clampf(pitch,-1.5f,1.5f);
         if(IsKeyPressed(KEY_ONE))weapon=0;
         if(IsKeyPressed(KEY_TWO))weapon=1;
-        if(Touch_SwitchPressed())weapon^=1;
+        if(IsKeyPressed(KEY_THREE))weapon=2;
+        if(IsKeyPressed(KEY_ZERO))weapon=3;
+        if(Touch_SwitchPressed())weapon=(weapon+1)%4;
         if(IsKeyPressed(KEY_R)||Touch_BPressed())reloadWeapon();
-        if(fireMouse||Touch_FireHeld())shoot();
+        if(fireMouse||Touch_FireHeld()){ if(weapon>=2)melee(); else shoot(); }
+        // grenade: hold M to charge, release to lob along an arc; tap "雷" on touch
+        if(Touch_GrePressed())throwGrenade(0.65f);
+        if(grenades>0&&!gre.on)
+        {
+            if(IsKeyDown(KEY_M)){greCharging=1;greHold+=dt/1.15f;if(greHold>1)greHold=1;}
+            else if(greCharging){ throwGrenade(greHold); greCharging=0;greHold=0; }
+        }
+        else greCharging=0;
         adsMouseHold=adsMouse;
     }
     else
@@ -247,8 +399,13 @@ static void updatePlayer(float dt)
         if(frame%30==0){mag[weapon]=10;shoot();}
         eye.z-=22*dt;
     }
-    if(reload>0){ reload-=dt*60.0f; if(reload<=0){reload=0;mag[weapon]=weapon==0?5:30;} }
+    if(reload>0){ reload-=dt*60.0f;
+        if(reload<=0){ reload=0; mag[weapon]+=reloadTake; reserve[weapon]-=reloadTake; reloadTake=0; } }
     fireCd-=dt;
+    if(meleeCd>0)meleeCd-=dt;
+    if(meleeSwing>0)meleeSwing-=dt*3.2f; if(meleeSwing<0)meleeSwing=0;
+    if(headMsgT>0)headMsgT-=dt;
+    updateGrenade(dt);
     Vector3 f=flatFwd(yaw), r=(Vector3){cosf(yaw),0,sinf(yaw)};
     Vector3 keyWish={0};
     if(IsKeyDown(KEY_W))keyWish=vadd(keyWish,f);
@@ -264,8 +421,9 @@ static void updatePlayer(float dt)
     Vector3 wish=vadd(keyWish,tWish);
     if(vlen(wish)>spd)wish=vmul(vnorm(wish),spd);
     pvel.x=wish.x; pvel.z=wish.z;
-    if(!gSelfTest&&(IsKeyPressed(KEY_SPACE)||Touch_ActPressed())&&jumps<2)
-    { pvel.y=(jumps==0)?7.2f:6.4f; jumps++; }
+    // historical infantry: a single jump / bound only — no double jump
+    if(!gSelfTest&&(IsKeyPressed(KEY_SPACE)||Touch_ActPressed())&&jumps==0)
+    { pvel.y=7.2f; jumps=1; }
     pvel.y-=GRAVITY*dt;
     // recoil recovery (view settles back down; gun returns to rest)
     kickP*=expf(-9.0f*dt); kickY*=expf(-12.0f*dt); gunKick*=expf(-13.0f*dt);
@@ -320,6 +478,14 @@ static void updatePlayer(float dt)
     if(eye.y<gy){eye.y=gy; if(pvel.y<=0.0f){pvel.y=0; jumps=0;}}
     if(fabsf(eye.x)>WORLD_HALF-10)eye.x=WORLD_HALF-10;
     if(fabsf(eye.z)>WORLD_HALF-10)eye.z=WORLD_HALF-10;
+    // footstep cadence while actually moving on the ground
+    if(!gSelfTest)
+    {
+        int grounded=(eye.y<=gy+0.03f); float hs=sqrtf(pvel.x*pvel.x+pvel.z*pvel.z);
+        if(grounded&&hs>1.2f){ stepAcc+=hs*dt; float stride=IsKeyDown(KEY_LEFT_SHIFT)?1.9f:2.3f;
+            if(stepAcc>=stride){stepAcc=0;Sfx_Foot();} }
+        else stepAcc=0;
+    }
     if(dmgCd>0)dmgCd-=dt; else hp+=6*dt;
     hp=clampf(hp,0,100);
     if(hitMark>0)hitMark-=dt;
@@ -388,6 +554,32 @@ static void drawCompass(void)
     DrawLine(cx,y+4,cx,y+12,(Color){255,240,180,255});
 }
 
+// floating health bars: red over enemies, blue over comrades
+static void drawHealthBars(void)
+{
+    Vector3 fwd=vnorm(vsub(cam.target,cam.position));
+    for(int team=0;team<2;team++)
+    {
+        int n=team?NF:NP; float maxD=team?230.0f:150.0f;
+        Color col=team?(Color){222,52,46,255}:(Color){60,140,240,255};
+        for(int i=0;i<n;i++)
+        {
+            Man*m=team?&foes[i]:&pals[i];
+            if(!m->alive)continue;
+            Vector3 head=(Vector3){m->pos.x,m->pos.y+2.15f,m->pos.z};
+            Vector3 to=vsub(head,cam.position);
+            if(vdot(to,fwd)<=0)continue;
+            if(vlen(to)>maxD)continue;
+            Vector2 s=GetWorldToScreen(head,cam);
+            if(s.x<10||s.x>GetScreenWidth()-10||s.y<10||s.y>GetScreenHeight()-10)continue;
+            int w=30,x=(int)s.x-w/2,y=(int)s.y;
+            DrawRectangle(x-1,y-1,w+2,6,(Color){0,0,0,170});
+            DrawRectangle(x,y,w,4,(Color){40,40,44,230});
+            DrawRectangle(x,y,(int)(w*clampf(m->hp/100.0f,0,1)),4,col);
+        }
+    }
+}
+
 static void drawHud(void)
 {
     int cx=GetScreenWidth()/2, cy=GetScreenHeight()/2;
@@ -398,16 +590,25 @@ static void drawHud(void)
     }
     if(hitMark>0) DrawTextEx(GameFont(),"X",(Vector2){cx-7,cy-16},22,2,(Color){255,70,60,255});
 
-    CN(weapon==0?"莫辛-纳甘步枪":"AKM 突击步枪",16,GetScreenHeight()-60,18,(Color){255,236,180,255});
-    CN(reload>0?"装填中...":TextFormat("%d / ∞",mag[weapon]),16,GetScreenHeight()-34,18,WHITE);
-    CN("生命",16,16,16,(Color){230,230,230,255});
-    DrawRectangle(70,16,160,14,(Color){0,0,0,140});
-    DrawRectangle(70,16,(int)(160*hp/100.0f),14,hp>35?(Color){200,60,50,255}:(Color){235,90,70,255});
-    DrawRectangleLines(70,16,160,14,WHITE);
-    CN(TextFormat("残敌 %d   战友 %d",foesAlive(),palsAlive()),16,40,17,WHITE);
-    CN("WASD移动  Shift冲刺  空格跳跃(可二段跳)  鼠标瞄准射击  1步枪 2冲锋枪 R装填  ESC撤退",16,GetScreenHeight()-12,14,(Color){215,220,230,220});
+    const char* wn=weapon==0?"莫辛-纳甘步枪(5发)":weapon==1?"AKM 突击步枪(100发)":weapon==2?"大刀(近战)":"拳头(近战)";
+    CN(wn,16,GetScreenHeight()-60,18,(Color){255,236,180,255});
+    if(weapon>=2) CN("近战 · 左键劈砍/出拳",16,GetScreenHeight()-34,18,WHITE);
+    else CN(reload>0?"装填中...":TextFormat("%d / %d   (余弹 %d)",mag[weapon],mag[weapon]+reserve[weapon],reserve[weapon]),
+            16,GetScreenHeight()-34,18,WHITE);
+    CN(TextFormat("手雷 × %d  (长按M蓄力投掷)",grenades),230,GetScreenHeight()-34,17,(Color){255,205,160,255});
+    CN("生命",16,52,16,(Color){230,230,230,255});
+    DrawRectangle(70,52,160,14,(Color){0,0,0,140});
+    DrawRectangle(70,52,(int)(160*hp/100.0f),14,hp>35?(Color){200,60,50,255}:(Color){235,90,70,255});
+    DrawRectangleLines(70,52,160,14,WHITE);
+    CN(TextFormat("残敌 %d   战友 %d",foesAlive(),palsAlive()),16,74,17,WHITE);
+    CN("WASD移动 Shift冲刺 空格单跳 左键攻击 右键瞄准 1步枪 2AKM 3大刀 0拳头 R装填 M(长按)手雷 E对话  ESC撤退",16,GetScreenHeight()-12,14,(Color){215,220,230,220});
+    DrawCornerFlags();
+    if(headMsgT>0) CNC("爆 头！",GetScreenWidth()/2,GetScreenHeight()/2+40,26,(Color){255,90,70,235});
     drawCompass();
-    if(introT>0)
+    if(celebrate>0)
+        CNC(planted?"胜 利！红旗插上了高地！":"冲上去——把红旗插上高地！",
+            GetScreenWidth()/2,(int)(GetScreenHeight()*0.34f),28,(Color){255,230,150,255});
+    else if(introT>0)
         CNC(gScenario==1?"长津湖 · 冰雕连 —— 卧雪潜伏，号响即冲":"夺取前方高地 · 冲啊！",
             GetScreenWidth()/2,(int)(GetScreenHeight()*0.30f),26,(Color){255,228,170,235});
 
@@ -439,7 +640,47 @@ static void drawHud(void)
     }
     if(dmgCd>0){ int a=(int)(90*(dmgCd/4.0f)); DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){150,0,0,a}); }
     else if(hp<35) DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){90,0,0,60});
+    drawHealthBars();
     DrawFPS(GetScreenWidth()-90,GetScreenHeight()-24);
+}
+
+static void drawWrapped(const char*t,int x,int y,int sz,int maxW,Color c)
+{
+    int cx=x;
+    for(const unsigned char*p=(const unsigned char*)t;*p;)
+    {
+        int nb=1; if((*p&0xE0)==0xC0)nb=2; else if((*p&0xF0)==0xE0)nb=3; else if((*p&0xF8)==0xF0)nb=4;
+        char ch[5]={0,0,0,0,0}; for(int k=0;k<nb&&p[k];k++)ch[k]=(char)p[k];
+        int w=(nb>1)?sz:sz/2;
+        if(cx+w>x+maxW){cx=x;y+=sz+6;}
+        DrawTextEx(GameFont(),ch,(Vector2){(float)cx,(float)y},(float)sz,2,c);
+        cx+=w+1; p+=nb;
+    }
+}
+
+static void drawTalk(void)
+{
+    if(talkOpen)
+    {
+        int bw=(int)(GetScreenWidth()*0.66f), bx=(GetScreenWidth()-bw)/2;
+        int by=GetScreenHeight()-250, bh=170;
+        DrawRectangle(bx,by,bw,bh,(Color){12,16,24,235});
+        DrawRectangleLinesEx((Rectangle){bx,by,bw,bh},3,(Color){240,210,140,255});
+        CNC("伤员 · 三连战士",bx+bw/2,by+16,22,(Color){255,228,170,255});
+        drawWrapped(TALK[talkPage],bx+24,by+52,21,bw-48,(Color){235,238,245,255});
+        CNC(talkPage<2?"按 E / 话 继续":"按 E / 话 合上",bx+bw/2,by+bh-34,17,(Color){200,210,225,235});
+    }
+    else if(woundOn)
+    {
+        float wd=vlen((Vector3){eye.x-wound.pos.x,0,eye.z-wound.pos.z});
+        if(wd<3.2f)
+        {
+            Vector3 h=(Vector3){wound.pos.x,wound.pos.y+1.4f,wound.pos.z};
+            Vector2 s=GetWorldToScreen(h,cam);
+            if(s.x>0&&s.x<GetScreenWidth()&&s.y>0&&s.y<GetScreenHeight())
+                CNC("按 E / 话 —— 听他说说",(int)s.x,(int)s.y,16,(Color){255,230,160,255});
+        }
+    }
 }
 
 void Ground_Run(int *outMode,int *outEnding)
@@ -447,8 +688,13 @@ void Ground_Run(int *outMode,int *outEnding)
     memset(foes,0,sizeof(foes)); memset(pals,0,sizeof(pals));
     spawnBattle();
     eye=(Vector3){0,0,180}; eye.y=Terrain_Height(0,180)+1.68f;
-    yaw=0; pitch=-0.05f; hp=100; weapon=0; mag[0]=5;mag[1]=30; reload=0; fireCd=0;
-    foesKilled=0; hitMark=0; dmgCd=0; holdT=0; timeAlive=0; frame=0; pvel=v3(0,0,0); ads=0; paused=0; kickP=kickY=gunKick=0;
+    yaw=0; pitch=-0.05f; hp=100; weapon=0;
+    mag[0]=5; mag[1]=30; reserve[0]=0; reserve[1]=70;   // rifle 5 total, AKM 100 total
+    reload=0; reloadTake=0; fireCd=0;
+    grenades=1; gre=(Gre){0}; greCharging=0; greHold=0;
+    meleeCd=meleeSwing=0; stepAcc=0; ambT=3.0f;
+    celebrate=0; planter=-1; planted=0; bugled=0; talkOpen=0; talkPage=0;
+    foesKilled=0; hitMark=0; dmgCd=0; holdT=0; timeAlive=0; frame=0; pvel=v3(0,0,0); ads=0; paused=0; kickP=kickY=gunKick=0; headMsgT=0;
     cam=(Camera3D){0}; cam.fovy=72; cam.projection=CAMERA_PERSPECTIVE; cam.up=(Vector3){0,1,0};
     jumps=0; introT=gScenario==1?7.0f:3.5f;
     DisableCursor();
@@ -460,15 +706,57 @@ void Ground_Run(int *outMode,int *outEnding)
         float dt=clampf(GetFrameTime(),0,0.033f); frame++; timeAlive+=dt;
         Touch_Update(1);
         if(IsKeyPressed(KEY_ESCAPE)){ EnableCursor(); *outMode=0; return; }
-        if(!gSelfTest && (Touch_PausePressed()||IsKeyPressed(KEY_P))) paused^=1;
-        if(paused)
+        if(IsKeyPressed(KEY_ESCAPE)){ EnableCursor(); *outMode=0; return; }
+        int wantPause = (!gSelfTest && (Touch_PausePressed()||IsKeyPressed(KEY_P)));
+
+        // wounded-comrade "last words" interaction (E on desktop, 话 on touch)
+        if(!paused && celebrate<=0)
+        {
+            float wd=vlen((Vector3){eye.x-wound.pos.x,0,eye.z-wound.pos.z});
+            if(wd<3.2f && !gSelfTest && (IsKeyPressed(KEY_E)||Touch_TalkPressed()))
+            {
+                if(!talkOpen){talkOpen=1;talkPage=0;}
+                else if(talkPage<2)talkPage++; else talkOpen=0;
+            }
+        }
+
+        if(wantPause && !paused){ paused=1; }
+        else if(paused)
         {
             int pm=Touch_PauseMenuSelect();
             if(pm==2||IsKeyPressed(KEY_Q)){ EnableCursor(); *outMode=0; return; }
             if(pm==1||IsKeyPressed(KEY_ENTER)||IsKeyPressed(KEY_KP_ENTER)) paused=0;
         }
-        if(!paused){ updatePlayer(dt); updateFoes(dt); updatePals(dt);
-            FX_Update(dt); Env_Update(dt); if(introT>0)introT-=dt; }
+
+        int frozen=(paused||talkOpen||celebrate>0);
+        if(!frozen){
+            updatePlayer(dt); updateFoes(dt); updatePals(dt);
+            FX_Update(dt); Env_Update(dt); if(introT>0)introT-=dt;
+            // distant, off-screen battle: random booms and smoke over the ridge
+            if(!gSelfTest){ ambT-=dt;
+                if(ambT<=0){ ambT=frand(4,9); Sfx_Boom(0.22f);
+                    Vector3 wp=(Vector3){frand(-500,500),0,frand(-700,-500)}; wp.y=Terrain_Height(wp.x,wp.z)+20;
+                    FX_Smoke(wp,2.2f); } }
+        }
+        else if(celebrate>0)
+        {
+            // the planter (squad leader, else a random survivor, else the player)
+            // runs to the crest and raises the red flag; the bugle sounds once.
+            celebrate-=dt;
+            if(planter>=0 && pals[planter].alive)
+            {
+                Man*s=&pals[planter];
+                Vector3 t=(Vector3){OBJV.x,0,OBJV.z};
+                s->ang=angTo(s->pos,t);
+                float dd=vlen(vsub(t,s->pos));
+                if(dd>3.0f){ Vector3 mv=vmul(flatFwd(s->ang),7.5f*dt);
+                    s->pos=vadd(s->pos,mv); s->pos.y=Terrain_Height(s->pos.x,s->pos.z); }
+                else planted=1;
+            } else planted=1;
+            if(planted&&!bugled){bugled=1;Sfx_Bugle();}
+            FX_Update(dt); Env_Update(dt);
+            if(celebrate<=0) celebrate=0;
+        }
 
         Vector3 dir=aimDir();
         cam.position=eye; cam.target=vadd(eye,dir);
@@ -498,34 +786,73 @@ void Ground_Run(int *outMode,int *outEnding)
         Env_DrawSky2D();
         BeginMode3D(cam);
         Terrain_Draw(cam); Sea_Draw(cam); Env_Draw(cam);
-        // objective flag
+        // our camp behind the start line: Five-star Red Flag + PLA August-1st flag
+        float c1y=Terrain_Height(-16,168), c2y=Terrain_Height(16,168);
+        DrawWavingFlag(cam,(Vector3){-16,c1y,168},0.5f,0,timeAlive,8.0f);
+        DrawWavingFlag(cam,(Vector3){ 16,c2y,168},-0.5f,1,timeAlive,8.0f);
+        // objective: bare pole until captured, our red flag planted on victory
         float gy=Terrain_Height(OBJV.x,OBJV.z);
         DrawPart(P_CYL,C_BROWN,MatrixIdentity(),MPart((Vector3){OBJV.x,gy+4,OBJV.z},(Vector3){1,0,0},0,(Vector3){0.12f,8,0.12f}));
-        DrawPart(P_BOX,C_RED,MatrixIdentity(),MPart((Vector3){OBJV.x+1.4f,gy+6.6f,OBJV.z},(Vector3){1,0,0},0,(Vector3){2.8f,1.6f,0.08f}));
+        if(planted) DrawWavingFlag(cam,(Vector3){OBJV.x,gy,OBJV.z},0.2f,0,timeAlive,8.0f);
+        else       DrawPart(P_BOX,C_NAVY,MatrixIdentity(),MPart((Vector3){OBJV.x+1.4f,gy+6.6f,OBJV.z},(Vector3){1,0,0},0,(Vector3){2.8f,1.6f,0.08f}));
         // sandbag cover
         for(int i=0;i<6;i++){ float x=-60+i*24; float z=-260-((i%2)*20); DrawPart(P_BOX,C_SAND,MatrixIdentity(),MPart((Vector3){x,Terrain_Height(x,z)+0.5f,z},(Vector3){0,1,0},i*0.4f,(Vector3){4,1,1.2f})); }
         // wrecked truck decoys
         DrawVehicle((Vector3){-90, Terrain_Height(-90,-60), -60}, 0.6f, 0, 1.0f);
         DrawVehicle((Vector3){110, Terrain_Height(110,-120), -120}, 2.2f, 2, 1.0f);
+        // restrained dark stains where men fell
+        for(int i=0;i<MAXBLD;i++)if(blds[i].on)
+            DrawPart(P_CYL,C_BLOOD,MatrixIdentity(),MPart(blds[i].p,(Vector3){0,1,0},blds[i].rot,(Vector3){blds[i].r,0.02f,blds[i].r}));
+        // fallen soldiers (both sides lie on the ground; no dismemberment)
+        for(int i=0;i<NF;i++)if(!foes[i].alive&&foes[i].state==9) DrawSoldierDown(foes[i].pos,foes[i].ang,1,1.0f);
+        for(int i=0;i<NP;i++)if(!pals[i].alive&&pals[i].state==9) DrawSoldierDown(pals[i].pos,pals[i].ang,0,1.0f);
+        // wounded comrade you can talk to
+        if(woundOn) DrawSoldierDown(wound.pos,wound.ang,0,1.0f);
         for(int i=0;i<NF;i++)if(foes[i].alive) DrawSoldier(foes[i].pos,-foes[i].ang,1,1.0f,1);
         for(int i=0;i<NP;i++)if(pals[i].alive) DrawSoldier(pals[i].pos,-pals[i].ang,0,1.0f,1);
+        // grenade in flight + charging arc preview
+        if(gre.on) DrawPart(P_SPHERE,C_DARK,MatrixIdentity(),MPart(gre.p,(Vector3){1,0,0},0,(Vector3){0.2f,0.24f,0.2f}));
+        if(greCharging)
+        {
+            Vector3 d2=aimDir();
+            Vector3 p0=vadd(eye,vadd(vmul(d2,0.7f),(Vector3){0,0.15f,0}));
+            Vector3 v0=vadd(vmul(d2,9+11*greHold),(Vector3){0,3.6f+1.6f*greHold,0});
+            for(int s2=1;s2<=14;s2++)
+            {
+                float tt=0.12f*s2;
+                Vector3 qp=(Vector3){p0.x+v0.x*tt,p0.y+v0.y*tt-0.5f*GRAVITY*tt*tt,p0.z+v0.z*tt};
+                DrawPart(P_SPHERE,C_YELLOW,MatrixIdentity(),MPart(qp,(Vector3){1,0,0},0,(Vector3){0.10f,0.10f,0.10f}));
+            }
+        }
         FX_Draw3D(cam);
         if(ads<0.5f && !gunOccluded) DrawRifleView(cam,weapon,gunKick);  // 瞄准/贴墙时隐去枪
         EndMode3D();
         if(paused) Touch_DrawPauseMenu();
-        else { drawHud(); drawScope(); Touch_DrawHUD(); }
+        else { drawHud(); drawScope(); Touch_DrawHUD(); drawTalk(); }
         EndDrawing();
         if(gSelfTest && frame==260) TakeScreenshot(TextFormat("%s/shot_ground.png",gShotDir));
 
-        // win / lose (frozen while paused)
-        if(!paused)
+        // win / lose (frozen while paused / in dialogue)
+        if(!paused&&!talkOpen)
         {
         float dz=eye.z-OBJV.z, dx=eye.x-OBJV.x;
         bool nearObj=(dx*dx+dz*dz)<70*70;
         int fa=foesAlive();
-        if(nearObj && fa<=3) holdT+=dt; else holdT=0;
         if(hp<=0){ endId=(foesKilled>=5||(eye.z< -250))?(gScenario==1?206:203):(gScenario==1?206:204); break; }
-        if((fa==0 && nearObj) || holdT>=5){ endId=(fa==0)?(gScenario==1?205:201):(gScenario==1?205:202); break; }
+        if(celebrate<=0)
+        {
+            if(nearObj && fa<=3) holdT+=dt; else holdT=0;
+            if((fa==0 && nearObj) || holdT>=5)
+            {
+                celebrate=3.4f;
+                if(pals[0].alive) planter=0;                       // squad leader first
+                else { int ids[NP],k=0; for(int i=0;i<NP;i++)if(pals[i].alive)ids[k++]=i;
+                       planter=k?ids[irand(0,k-1)]:-1; }            // else a random survivor
+                if(gSelfTest){endId=(fa==0)?(gScenario==1?205:201):(gScenario==1?205:202);break;}
+            }
+        }
+        else if(celebrate>0 && (celebrate-dt)<=0)
+        { endId=(fa==0)?(gScenario==1?205:201):(gScenario==1?205:202); break; }
         if(gSelfTest && frame>=420){ endId=201; break; }
         }
     }

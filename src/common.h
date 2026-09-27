@@ -67,7 +67,7 @@ enum { P_BOX=0, P_CYL, P_SPHERE, P_CONE, P_OCT, P_SHAPE_COUNT };
 enum {
     C_DARK=0,C_GREY,C_STEEL,C_BLACK,C_WHITE,C_RED,C_YELLOW,C_ORANGE,
     C_OLIVE,C_KHAKI,C_SKIN,C_WOOD,C_GREEN,C_BROWN,C_NAVY,C_SAND,
-    C_HELMET,C_GI,C_PVA,C_DARKOLIVE,C_RUDDER,C_GLASS,C_MARK,C_JETSILVER,C_PAL_COUNT
+    C_HELMET,C_GI,C_PVA,C_DARKOLIVE,C_RUDDER,C_GLASS,C_MARK,C_JETSILVER,C_BLOOD,C_PAL_COUNT
 };
 void   Scene_Load(void);
 void   Scene_Unload(void);
@@ -77,6 +77,7 @@ void   DrawParts(int shape, int color, Matrix parent, const Matrix* locals, int 
 void   DrawJ20(Vector3 pos, Quaternion q, float scale, int insignia);
 void   DrawSabre(Vector3 pos, Quaternion q, float scale);
 void   DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp);
+void   DrawSoldierDown(Vector3 feet, float yaw, int uniform, float scale);
 void   DrawVehicle(Vector3 pos, float yaw, int kind, float scale);
 void   DrawMissile(Vector3 pos, Quaternion q);
 void   DrawBomb(Vector3 pos, Quaternion q);
@@ -91,6 +92,7 @@ void FX_Explosion(Vector3 p, float scale);
 void FX_Fireball(Vector3 p, float scale);
 void FX_Smoke(Vector3 p, float scale);
 void FX_Muzzle(Vector3 p);
+void FX_Blood(Vector3 p);
 void FX_FlakBurst(Vector3 p);
 void FX_Tracer(Vector3 a, Vector3 b, Color c, float life);
 void FX_EngineSmoke(Vector3 p);
@@ -104,12 +106,17 @@ void Sfx_Boom(float vol);
 void Sfx_Flak(void);
 void Sfx_Engine(float throttle01, int on);
 void Sfx_Bugle(void);
+void Sfx_Foot(void);
 
 // clouds / sky decoration
 void Env_Load(void);
 void Env_Update(float dt);
 void Env_Draw(Camera3D cam);
 void Env_DrawSky2D(void);
+void DrawCornerFlags(void);
+// 3D waving flag on a pole. kind 0 = Five-star Red Flag, 1 = PLA "Aug 1st" flag.
+// base is the pole foot; yaw rotates the cloth direction; t is elapsed seconds.
+void DrawWavingFlag(Camera3D cam, Vector3 base, float yaw, int kind, float t, float poleH);
 
 // ---------- modes ----------
 typedef struct {
@@ -150,6 +157,9 @@ int   Touch_BPressed(void);            // bomb (air) / reload (ground)
 int   Touch_SwitchPressed(void);       // ground weapon switch
 int   Touch_PausePressed(void);        // on-screen pause/back
 int   Touch_ADSHeld(void);             // ground aim-down-sights (hold)
+int   Touch_TalkPressed(void);          // interact with wounded comrade
+int   Touch_GrePressed(void);           // throw grenade (ground)
+int   Touch_PauseTap(float*x,float*y);  // fresh tap while pause overlay is up
 int   Touch_PauseMenuSelect(void);     // pause overlay: 1 resume, 2 quit
 void  Touch_DrawPauseMenu(void);
 int   Touch_IsTouch(void);
