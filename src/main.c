@@ -219,18 +219,19 @@ static void drawMenuBg(void)
 }
 
 typedef struct { Rectangle r; const char* name; int key, to, scn; } Btn;
+
+static const char* CAMP_NAME[12]={
+    "温井伏击战 · 山谷","云山攻坚战 · 丘陵","长津湖 · 冰雕连(雪夜)","松骨峰阻击战(雪·黄昏)",
+    "上甘岭坑道战(焦土)","金城反击战 · 河谷","汉江夜渡(夜)","三八线阵地战(硝烟)",
+    "铁原阻击战 · 宽谷","横城反击战(黄昏)","平壤外围战","黄草岭阻击战(山口)" };
+static const int CAMP_KEY[12]={
+    KEY_ONE,KEY_TWO,KEY_THREE,KEY_FOUR,KEY_FIVE,KEY_SIX,
+    KEY_SEVEN,KEY_EIGHT,KEY_NINE,KEY_ZERO,KEY_MINUS,KEY_EQUAL };
+
 static int menuLoop(int *go)
 {
     static int menuInit=0;
     if(!menuInit){ menuInit=1; if(!gSelfTest && gScenario!=0){gScenario=0; Terrain_Init(); Terrain_ApplyShader(gLit);} }
-    Btn b[8]={ {{0,0,400,56},"① 空战模式 · 驾驶歼-20",KEY_ONE,ST_AIR,0},
-               {{0,0,400,56},"② 山地攻坚 · 昼",KEY_TWO,ST_GROUND,0},
-               {{0,0,400,56},"③ 长津湖 · 冰雕连(雪夜)",KEY_THREE,ST_GROUND,1},
-               {{0,0,400,56},"④ 上甘岭 · 坑道高地",KEY_FOUR,ST_GROUND,2},
-               {{0,0,400,56},"⑤ 松骨峰 · 阻击战(黄昏)",KEY_FIVE,ST_GROUND,3},
-               {{0,0,400,56},"⑥ 汉江 · 夜渡",KEY_SIX,ST_GROUND,4},
-               {{0,0,400,56},"⑦ 三八线 · 阵地防御",KEY_SEVEN,ST_GROUND,5},
-               {{0,0,400,56},"⑧ 操作说明 / 历史",KEY_EIGHT,ST_HELP,0} };
     int frame=0, sel=-1;
     float guard=0.30f;   // swallow the tap/click that carried over from a sub-screen
     while(!WindowShouldClose())
@@ -238,37 +239,63 @@ static int menuLoop(int *go)
         float dt=GetFrameTime(); frame++; FX_Update(dt); Env_Update(dt);
         if(guard>0)guard-=dt;
         Vector2 m=GetMousePosition();
+        float txp=0,typ=0; int tapped=(guard<=0 && Touch_UITap(&txp,&typ));
+        int mousePressed=(guard<=0 && IsMouseButtonPressed(MOUSE_BUTTON_LEFT));
+        // unified hit helper: works with mouse and with fresh finger taps
+        #define M_HIT(rp) (CheckCollisionPointRec(m,(rp)) || \
+            (tapped && CheckCollisionPointRec((Vector2){txp,typ},(rp))))
+        #define M_PRESS(rp) (mousePressed && CheckCollisionPointRec(m,(rp)) || \
+            (tapped && CheckCollisionPointRec((Vector2){txp,typ},(rp))))
         BeginDrawing();
         ClearBackground((Color){150,180,210,255});
         drawMenuBg();
         DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){6,10,18,120});
-        CNC("长 空 · 1951",GetScreenWidth()/2,86,52,(Color){255,232,150,255});
-        CNC("J-20 SKIES OVER KOREA · 抗美援朝 · 重返战场",GetScreenWidth()/2,146,20,(Color){225,230,240,235});
-        int CW=400, CG=24, xL=GetScreenWidth()/2-CW-CG/2, xR=GetScreenWidth()/2+CG/2;
-        for(int i=0;i<8;i++)
+        int SW=GetScreenWidth();
+        CNC("长 空 · 1951",SW/2,40,46,(Color){255,232,150,255});
+        CNC("J-20 SKIES OVER KOREA · 抗美援朝十二大战役 · 重返战场",SW/2,92,18,(Color){225,230,240,235});
+
+        // ---- top row: air war / LAN coop / history & controls ----
+        const char* topN[3]={"① 空战 · 驾驶歼-20","⑨ 局域网协同作战","⑩ 操作说明 / 历史"};
+        int topTo[3]={ST_AIR,-2,ST_HELP};
+        float topW=300, topGap=24, topY=112, topH=42;
+        float topX0=SW/2.0f-(3*topW+2*topGap)/2.0f;
+        for(int i=0;i<3;i++)
         {
-            b[i].r.x=(i&1)?xR:xL; b[i].r.y=208+(i/2)*64;
-            bool hov=CheckCollisionPointRec(m,b[i].r);
-            DrawRectangleRec(b[i].r,hov?(Color){180,60,45,225}:(Color){20,28,40,205});
-            DrawRectangleLinesEx(b[i].r,2,(Color){255,210,140,255});
-            CNC(b[i].name,(int)(b[i].r.x+CW/2),(int)b[i].r.y+15,20,(Color){240,240,245,255});
-            if(guard<=0 && hov && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ sel=b[i].to; gScenario=b[i].scn; }
-            if(guard<=0 && IsKeyPressed(b[i].key)){ sel=b[i].to; gScenario=b[i].scn; }
-        }
-        {   Rectangle lb={GetScreenWidth()/2.0f-210,476,420,52};
-            bool lh=CheckCollisionPointRec(m,lb);
-            DrawRectangleRec(lb,lh?(Color){40,96,150,240}:(Color){18,30,52,215});
-            DrawRectangleLinesEx(lb,2,(Color){150,205,255,255});
-            CNC("⑨ 局域网协同作战（同一 WiFi · 创建 / 加入）",GetScreenWidth()/2,476+15,20,(Color){235,242,250,255});
-            if(guard<=0 && ((lh&&IsMouseButtonPressed(MOUSE_BUTTON_LEFT))||IsKeyPressed(KEY_NINE)))
+            Rectangle r={topX0+i*(topW+topGap),topY,topW,topH};
+            bool hov=M_HIT(r);
+            DrawRectangleRec(r,hov?(Color){180,60,45,225}:(Color){20,28,40,205});
+            DrawRectangleLinesEx(r,2,(Color){255,210,140,255});
+            CNC(topN[i],(int)(r.x+topW/2),(int)r.y+11,19,(Color){240,240,245,255});
+            if(M_PRESS(r))
             {
-                guard=0.3f;
-                int lr=Coop_Lobby();           // keeps the UDP socket open on start
-                if(lr==1||lr==2){ sel=ST_GROUND; gScenario=gCoopScenario; }
+                if(topTo[i]==-2){ guard=0.3f; int lr=Coop_Lobby();
+                    if(lr==1||lr==2){ sel=ST_GROUND; gScenario=gCoopScenario; } }
+                else sel=topTo[i];
             }
         }
-        CNC("铭记历史 · 珍爱和平 · 吾辈自强",GetScreenWidth()/2,GetScreenHeight()-70,18,(Color){255,225,180,220});
-        CNC("点击或按 1~9 选择 · ESC 退出",GetScreenWidth()/2,GetScreenHeight()-40,15,(Color){210,215,225,210});
+
+        // ---- 12 army campaigns: 3 columns x 4 rows ----
+        float gap=14, cellH=52, gridY=170;
+        float cellW=(SW-48-2*gap)/3.0f; if(cellW>420)cellW=420;
+        float gridW=3*cellW+2*gap, gx0=SW/2.0f-gridW/2.0f;
+        Btn cb;
+        for(int i=0;i<12;i++)
+        {
+            int col=i%3, row=i/3;
+            Rectangle r={gx0+col*(cellW+gap), gridY+row*(cellH+10), cellW, cellH};
+            (void)cb;
+            bool hov=M_HIT(r);
+            DrawRectangleRec(r,hov?(Color){180,60,45,225}:(Color){20,28,40,205});
+            DrawRectangleLinesEx(r,2,(Color){255,210,140,255});
+            char lab[64]; snprintf(lab,sizeof lab,"%d  %s",i+1,CAMP_NAME[i]);
+            CNC(lab,(int)(r.x+cellW/2),(int)r.y+15,17,(Color){240,240,245,255});
+            if(M_PRESS(r)){ sel=ST_GROUND; gScenario=i; }
+            if(guard<=0 && IsKeyPressed(CAMP_KEY[i])){ sel=ST_GROUND; gScenario=i; }
+        }
+        #undef M_HIT
+        #undef M_PRESS
+        CNC("铭记历史 · 珍爱和平 · 吾辈自强",SW/2,GetScreenHeight()-46,18,(Color){255,225,180,220});
+        CNC("点击 / 触屏点选或按 1~0、-、= 选择 · ESC 退出",SW/2,GetScreenHeight()-22,15,(Color){210,215,225,210});
         EndDrawing();
         if(sel>=0){ if(sel==ST_AIR||sel==ST_GROUND){ Terrain_Init(); Terrain_ApplyShader(gLit); } *go=sel;return sel; }
         if(gSelfTest){ TakeScreenshot(TextFormat("%s/shot_menu.png",gShotDir)); *go=ST_AIR; return ST_AIR; }
@@ -287,7 +314,7 @@ int main(int argc,char**argv)
         else if(strcmp(argv[i],"--coopclient")==0){ devCoop=2; }
         else if(strcmp(argv[i],"--bhost")==0){ gSelfTest=1; devBattle=1; }
         else if(strcmp(argv[i],"--bclient")==0){ gSelfTest=1; devBattle=2; }
-        else if(strcmp(argv[i],"--night")==0) gScenario=1; // dev: preview Chosin night theme
+        else if(strcmp(argv[i],"--night")==0) gScenario=2; // dev: preview Chosin night theme
         else if(strcmp(argv[i],"--map")==0 && i+1<argc){ gScenario=atoi(argv[++i]); gSelfTest=1; } // dev: preview map N
         else if(strcmp(argv[i],"--flagtest")==0){ gSelfTest=1; gFlagTest=1; }
         else if(strcmp(argv[i],"--shotdir")==0 && i+1<argc){ strncpy(gShotDir,argv[++i],sizeof(gShotDir)-1); }

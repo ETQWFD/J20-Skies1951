@@ -96,13 +96,13 @@ int Coop_PollRooms(CoopRoom*out,int cap,float dt)
     while((n=Net_Poll(&f,b,sizeof b-1))>0)
     {
         b[n]=0; int sc=0,pl=0;
-        if(strncmp(b,"SKG",3)==0){ int g=0; if(sscanf(b,"SKG|%d",&g)==1){ sStart=1; sStartSc=g; } }
+        if(strncmp(b,"SKG",3)==0){ int g=0; if(sscanf(b,"SKG|%d",&g)==1){ sStart=1; sStartSc=(g>=0&&g<=11)?g:0; } }
         else if(sscanf(b,"SKH|%d|%d",&sc,&pl)>=1)
-        { roomTouch(&f,"host",sc,pl);
+        { roomTouch(&f,"host",(sc>=0&&sc<=11)?sc:0,pl);
           if(sJoinId>=0 && Net_AddrEq(&f,&sJoinAddr)) { /* ack handled below */ } }
         int id=-1,sc2=0;
         if(sscanf(b,"SKA|%d|%d",&id,&sc2)==2 && sJoinT>0 && Net_AddrEq(&f,&sJoinAddr))
-        { sJoinId=id; sJoinT=0; gCoopId=id; gCoopScenario=sc2; }
+        { sJoinId=id; sJoinT=0; gCoopId=id; gCoopScenario=(sc2>=0&&sc2<=11)?sc2:0; }
     }
     for(int i=0;i<sRoomN;i++)sRooms[i].lastSeen+=dt;
     for(int i=sRoomN-1;i>=0;i--) if(sRooms[i].lastSeen>4.0f)
@@ -144,11 +144,14 @@ static void panelTitle(const char*s,int y)
 static bool btn(const char*s,int cx,int y,int w,int h)
 {
     Rectangle r={cx-w/2,y,w,h}; Vector2 m=GetMousePosition();
+    float tx=0,ty=0; int tapped=Touch_UITap(&tx,&ty);
+    Vector2 tpv=(Vector2){tx,ty};
     bool hov=CheckCollisionPointRec(m,r);
     DrawRectangleRec(r,hov?(Color){178,58,44,235}:(Color){22,30,44,230});
     DrawRectangleLinesEx(r,2,(Color){255,210,140,255});
     CNC(s,cx,y+h/2-12,20,(Color){240,242,248,255});
-    return hov && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    return (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)&&hov) ||
+           (tapped && CheckCollisionPointRec(tpv,r));
 }
 
 int Coop_Lobby(void)
@@ -164,8 +167,8 @@ int Coop_Lobby(void)
             panelTitle("局域网联机 · 同一 WiFi / 热点下互连",120);
             CNC("先在电脑/手机一端创建主机，另一端点“搜索并加入”即可自动发现在线房间",GetScreenWidth()/2,190,18,(Color){205,212,225,235});
             int cx=GetScreenWidth()/2;
-            if(btn("① 创建主机 · 山地攻坚",cx,250,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=0; if(Net_Host())phase=1; }
-            if(btn("② 创建主机 · 长津湖夜战",cx,318,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=1; if(Net_Host())phase=1; }
+            if(btn("① 创建主机 · 温井伏击战",cx,250,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=0; if(Net_Host())phase=1; }
+            if(btn("② 创建主机 · 长津湖夜战",cx,318,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=2; if(Net_Host())phase=1; }
             if(btn("③ 搜索并加入主机",cx,386,440,58)){ gCoopRole=2; if(Coop_BeginSearch())phase=2; }
             if(btn("④ 返回主菜单",cx,468,440,54)){ Net_Close();gCoopRole=0; EndDrawing(); return 0; }
             CNC("局域网协同作战：同一 WiFi/热点下，一端创建主机，另一端搜索加入，再由主机开始战斗",cx,GetScreenHeight()-70,16,(Color){170,178,194,220});
@@ -174,7 +177,7 @@ int Coop_Lobby(void)
         else if(phase==1)
         {
             Coop_HostPoll(dt);
-            panelTitle(gCoopScenario==1?"主机已创建 · 长津湖夜战":"主机已创建 · 山地攻坚",110);
+            panelTitle(gCoopScenario==2?"主机已创建 · 长津湖夜战":"主机已创建 · 温井伏击战",110);
             int cx=GetScreenWidth()/2;
             CNC("在另一台设备上点“搜索并加入”；人齐后点下面的“开始战斗”",cx,180,20,(Color){215,220,232,255});
             CNC(TextFormat("在线战友：%d 人（含主机）",Coop_PeerCount()+1),cx,232,26,(Color){120,230,150,255});
@@ -207,7 +210,7 @@ int Coop_Lobby(void)
                 for(int i=0;i<nr;i++)
                 {
                     char lb[96]; snprintf(lb,sizeof lb,"加入：%s · %s · 在线%d人",
-                        rooms[i].name, rooms[i].scenario==1?"长津湖夜战":"山地攻坚", rooms[i].players+1);
+                        rooms[i].name, rooms[i].scenario==2?"长津湖夜战":"温井伏击战", rooms[i].players+1);
                     if(btn(lb,cx,y,520,54)){ Coop_Join(&rooms[i].addr); }
                     y+=64;
             }   }

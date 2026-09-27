@@ -25,8 +25,10 @@ static int insideRect(float x,float y,float x0,float y0,float w,float h){ return
 static int latchAct=0,latchB=0,latchSw=0,latchPause=0,latchTalk=0,latchGre=0;
 static int started=0;
 static int s_lastN=0;            // touch count at end of previous frame
-static int s_menuTap=0;          // a brand-new touch began this frame
+static int s_menuTap=0;          // a NEW finger landed this frame (modal UI taps)
 static float s_menuX=0,s_menuY=0;
+static int s_modal=0;            // pause overlay up: every finger is a UI finger
+void Touch_SetPaused(int p){ s_modal=p; }
 
 // A finger keeps the ROLE it got where it first landed (stick / a button /
 // look), so sliding off a button or lifting-and-tapping can never suddenly
@@ -73,20 +75,34 @@ void Touch_Update(int mode)
     bTalk.bx=0.585f*sW; bTalk.by=0.85f*sH; bTalk.br=0.058f*sH; bTalk.label="话";
     bGre.bx =0.585f*sW; bGre.by =0.70f*sH; bGre.br =0.058f*sH; bGre.label="雷";
 
-    // a brand-new touch this frame (used by the pause overlay so one tap works)
+    // a NEW finger landing is a UI tap candidate: works even while other
+    // fingers are already holding the stick / a button (old bug: only touch0
+    // from zero fingers counted, so the pause buttons often did nothing).
     int nNow=GetTouchPointCount();
-    s_menuTap=(nNow>0 && s_lastN==0);
-    if(s_menuTap){ Vector2 t0=GetTouchPosition(0); s_menuX=t0.x; s_menuY=t0.y; }
+    int newCount=(nNow>s_lastN)?(nNow-s_lastN):0;
+    s_menuTap=0;
     if(s_supp>0)
     {
         s_supp-=GetFrameTime();
-        s_menuTap=0; nNow=0;
         for(int k=0;k<MAXT;k++) s_role[k]=ROLE_NONE;
-        s_lastN=0;
+        s_lastN=nNow; nNow=0;
     }
 
     // 3) reset this frame's classification (fire re-classified each frame too)
     bFire.held=0; bAct.held=0; bB.held=0; bSw.held=0; bAds.held=0; bPause.held=0; bTalk.held=0; bGre.held=0;
+    if(s_modal){ bFire.held=0; s_axisX=0; s_axisY=0; s_lookDX=0; s_lookDY=0;
+        // while paused every landing finger is a pure tap; strip in-game roles
+        for(int k=0;k<nNow&&k<MAXT;k++)
+        {
+            Vector2 tp=GetTouchPosition(k);
+            if(s_role[k]==ROLE_NONE && newCount>0)
+            { s_menuTap=1; s_menuX=tp.x; s_menuY=tp.y; newCount--; }
+            s_role[k]=ROLE_NONE;
+        }
+        for(int k=nNow;k<MAXT;k++) s_role[k]=ROLE_NONE;
+        s_lastN=GetTouchPointCount();
+        return;
+    }
 
     int n=nNow;
     float stickDx=0,stickDy=0,stickOn=0;
@@ -96,8 +112,10 @@ void Touch_Update(int mode)
     {
         Vector2 tp=GetTouchPosition(k);
         float x=tp.x, y=tp.y;
-        if(s_role[k]==ROLE_NONE)
+        int justLanded=(s_role[k]==ROLE_NONE);
+        if(justLanded)
         {
+            if(newCount>0){ s_menuTap=1; s_menuX=x; s_menuY=y; newCount--; }
             // assign this finger's role exactly once, at its landing point
             s_lx[k]=x; s_ly[k]=y;
             if(insideRect(x,y,12,12,84,56)) s_role[k]=ROLE_PAUSE;
@@ -122,10 +140,35 @@ void Touch_Update(int mode)
                 stickDx=dx; stickDy=-dy; stickOn=1;   // screen up -> +Y
                 break;
             }
-            case ROLE_FIRE: bFire.held=1; break;
+            case ROLE_FIRE:
+                bFire.held=1;
+                // holding fire you can still drag your aim with the same thumb
+                {
+                    float ddx=(float)(x-s_lx[k]), ddy=(float)(y-s_ly[k]);
+                    const float FDEAD=7.0f, FCAP=38.0f;
+                    if(ddx> FCAP)ddx= FCAP; if(ddx<-FCAP)ddx=-FCAP;
+                    if(ddy> FCAP)ddy= FCAP; if(ddy<-FCAP)ddy=-FCAP;
+                    if(fabsf(ddx)>FDEAD) s_lookDX += ddx*0.7f;
+                    if(fabsf(ddy)>FDEAD) s_lookDY += ddy*0.7f;
+                    s_lx[k]=x; s_ly[k]=y;
+                }
+                break;
             case ROLE_ACT:  bAct.held=1;  break;
             case ROLE_B:    bB.held=1;    break;
-            case ROLE_ADS:  bAds.held=1;  break;
+            case ROLE_ADS:
+                bAds.held=1;
+                // the thumb holding the scope can keep sweeping the view, so
+                // aiming down sights doesn't lock the camera
+                {
+                    float ddx=(float)(x-s_lx[k]), ddy=(float)(y-s_ly[k]);
+                    const float ADEAD=4.0f, ACAP=42.0f;
+                    if(ddx> ACAP)ddx= ACAP; if(ddx<-ACAP)ddx=-ACAP;
+                    if(ddy> ACAP)ddy= ACAP; if(ddy<-ACAP)ddy=-ACAP;
+                    if(fabsf(ddx)>ADEAD) s_lookDX += ddx;
+                    if(fabsf(ddy)>ADEAD) s_lookDY += ddy;
+                    s_lx[k]=x; s_ly[k]=y;
+                }
+                break;
             case ROLE_SW:   bSw.held=1;   break;
             case ROLE_TALK: if(mode==1) bTalk.held=1; break;
             case ROLE_GRE:  if(mode==1) bGre.held=1;  break;
@@ -170,11 +213,24 @@ int Touch_PauseTap(float*x,float*y)
     *x=s_menuX; *y=s_menuY; return 1;
 }
 
+// Self-contained fresh-finger tap for full-screen menus (main menu / lobby),
+// independent of Touch_Update(). Coordinates are screen pixels.
+static int s_uiPrevN=0;
+int Touch_UITap(float*x,float*y)
+{
+    int n=GetTouchPointCount();
+    int hit=(n>s_uiPrevN);
+    if(hit){ int idx=s_uiPrevN<MAXT?s_uiPrevN:0; Vector2 tp=GetTouchPosition(idx);
+             if(tp.x>=0){ *x=tp.x; *y=tp.y; } else hit=0; }
+    s_uiPrevN=n;
+    return hit;
+}
+
 // returns 1 = resume, 2 = quit to menu; hit-tests the fresh tap or a mouse click
 int Touch_PauseMenuSelect(void)
 {
     float x=-1,y=-1, hit=0;
-    if(s_menuTap){ x=s_menuX*sW; y=s_menuY*sH; hit=1; }   // tap coords are 0..1
+    if(s_menuTap){ x=s_menuX; y=s_menuY; hit=1; }          // tap coords are PIXELS
     else if(IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ x=(float)GetMouseX(); y=(float)GetMouseY(); hit=1; }
     if(!hit) return 0;
     for(int which=1;which<=2;which++)
@@ -276,6 +332,8 @@ int Touch_PausePressed(void){ return 0; }
 int Touch_TalkPressed(void){ return 0; }
 int Touch_GrePressed(void){ return 0; }
 int Touch_PauseTap(float*x,float*y){ (void)x;(void)y; return 0; }
+int Touch_UITap(float*x,float*y){ (void)x;(void)y; return 0; }
+void Touch_SetPaused(int p){ (void)p; }
 int Touch_PauseMenuSelect(void){ return 0; }
 void Touch_DrawPauseMenu(void){}
 void Touch_Suppress(float seconds){ (void)seconds; }

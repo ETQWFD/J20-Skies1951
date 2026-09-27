@@ -21,17 +21,18 @@ static const char *VS =
 "attribute vec4 vertexColor;\n"
 "uniform mat4 mvp;\n"
 "uniform mat4 matModel;\n"
-"varying vec3 vW; varying vec3 vN; varying vec4 vC;\n"
+"varying vec3 vW; varying vec3 vN; varying vec4 vC; varying vec2 vUV;\n"
 "void main(){\n"
 "  vW=(matModel*vec4(vertexPosition,1.0)).xyz;\n"
 "  vN=mat3(matModel)*vertexNormal;\n"
-"  vC=vertexColor;\n"
+"  vC=vertexColor; vUV=vertexTexCoord;\n"
 "  gl_Position=mvp*vec4(vertexPosition,1.0);\n"
 "}\n";
 
 static const char *FS =
 "precision mediump float;\n"
-"varying vec3 vW; varying vec3 vN; varying vec4 vC;\n"
+"varying vec3 vW; varying vec3 vN; varying vec4 vC; varying vec2 vUV;\n"
+"uniform sampler2D texture0;\n"
 "uniform vec4 colDiffuse;\n"
 "uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec3 camPos;\n"
 "uniform vec3 fogCol; uniform float fogNear; uniform float fogFar;\n"
@@ -40,15 +41,16 @@ static const char *FS =
 "  float ndl=max(dot(N,normalize(sunDir)),0.0);\n"
 "  float wrap=max(dot(N,normalize(sunDir))*0.5+0.5,0.0);\n"
 "  float hemi=0.5+0.5*N.y;\n"
-"  vec3 base=colDiffuse.rgb*vC.rgb;\n"
+"  vec4 tex=texture2D(texture0,vUV);\n"
+"  vec3 base=tex.rgb*colDiffuse.rgb*vC.rgb;\n"
 "  vec3 skyTint=vec3(0.60,0.70,0.92);\n"
 "  vec3 gndTint=vec3(0.40,0.35,0.29);\n"
 "  vec3 hemiC=mix(gndTint,skyTint,hemi);\n"
-"  vec3 lit=base*(amb + hemiC*0.30 + ndl*sunCol*1.05);\n"
+"  vec3 lit=base*(amb + hemiC*0.26 + pow(ndl,0.85)*sunCol*1.35);\n"
 "  float d=distance(vW,camPos);\n"
 "  float f=clamp((d-fogNear)/(fogFar-fogNear),0.0,1.0); f=f*f;\n"
 "  lit=mix(lit,fogCol,f);\n"
-"  gl_FragColor=vec4(lit, colDiffuse.a*vC.a);\n"
+"  gl_FragColor=vec4(lit, tex.a*colDiffuse.a*vC.a);\n"
 "}\n";
 #else
 static const char *VS =
@@ -59,17 +61,18 @@ static const char *VS =
 "layout(location=3) in vec4 vertexColor;\n"
 "uniform mat4 mvp;\n"
 "uniform mat4 matModel;\n"
-"out vec3 vW; out vec3 vN; out vec4 vC;\n"
+"out vec3 vW; out vec3 vN; out vec4 vC; out vec2 vUV;\n"
 "void main(){\n"
 "  vW=(matModel*vec4(vertexPosition,1.0)).xyz;\n"
 "  vN=mat3(matModel)*vertexNormal;\n"
-"  vC=vertexColor;\n"
+"  vC=vertexColor; vUV=vertexTexCoord;\n"
 "  gl_Position=mvp*vec4(vertexPosition,1.0);\n"
 "}\n";
 
 static const char *FS =
 "#version 330\n"
-"in vec3 vW; in vec3 vN; in vec4 vC;\n"
+"in vec3 vW; in vec3 vN; in vec4 vC; in vec2 vUV;\n"
+"uniform sampler2D texture0;\n"
 "uniform vec4 colDiffuse;\n"
 "uniform vec3 sunDir; uniform vec3 sunCol; uniform vec3 amb; uniform vec3 camPos;\n"
 "uniform vec3 fogCol; uniform float fogNear; uniform float fogFar;\n"
@@ -79,15 +82,16 @@ static const char *FS =
 "  float ndl=max(dot(N,normalize(sunDir)),0.0);\n"
 "  float wrap=max(dot(N,normalize(sunDir))*0.5+0.5,0.0);\n"
 "  float hemi=0.5+0.5*N.y;\n"
-"  vec3 base=colDiffuse.rgb*vC.rgb;\n"
+"  vec4 tex=texture2D(texture0,vUV);\n"
+"  vec3 base=tex.rgb*colDiffuse.rgb*vC.rgb;\n"
 "  vec3 skyTint=vec3(0.60,0.70,0.92);\n"
 "  vec3 gndTint=vec3(0.40,0.35,0.29);\n"
 "  vec3 hemiC=mix(gndTint,skyTint,hemi);\n"
-"  vec3 lit=base*(amb + hemiC*0.30 + ndl*sunCol*1.05);\n"
+"  vec3 lit=base*(amb + hemiC*0.26 + pow(ndl,0.85)*sunCol*1.35);\n"
 "  float d=distance(vW,camPos);\n"
 "  float f=clamp((d-fogNear)/(fogFar-fogNear),0.0,1.0); f=f*f;\n"
 "  lit=mix(lit,fogCol,f);\n"
-"  frag=vec4(lit, colDiffuse.a*vC.a);\n"
+"  frag=vec4(lit, tex.a*colDiffuse.a*vC.a);\n"
 "}\n";
 #endif
 
@@ -125,6 +129,7 @@ static const Color PAL[C_PAL_COUNT] = {
     [C_MARK]     = {200,40,36,255},
     [C_JETSILVER]= {96,104,118,255},
     [C_BLOOD]    = {112,14,14,210},
+    [C_SHADOW]   = {0,0,0,120},
 };
 
 // ---------------------------------------------------------------- math helpers
@@ -240,19 +245,33 @@ void Scene_SetCamera(Camera3D cam)
 {
     if (gLit.id==0) return;
     Vector3 sunCol, amb, fog; float fn, ff;
-    if(gScenario==1)
-    {   // cold moonlit winter night at Chosin
-        sunCol=(Vector3){0.62f,0.70f,0.92f};
-        amb   =(Vector3){0.135f,0.155f,0.215f};
-        fog   =(Vector3){0.20f,0.255f,0.36f};
-        fn=520.0f; ff=3000.0f;
+    if(Map_IsNight())
+    {   // cold moonlit winter night at Chosin / the Han crossing
+        sunCol=(Vector3){0.66f,0.74f,0.98f};
+        amb   =(Vector3){0.10f,0.12f,0.18f};
+        fog   =(Vector3){0.17f,0.22f,0.33f};
+        fn=420.0f; ff=2600.0f;
+    }
+    else if(Map_IsScorch())
+    {   // shell-blasted, smoke-hazed ridges (Triangle Hill / the 38th parallel)
+        sunCol=(Vector3){1.05f,0.86f,0.62f};
+        amb   =(Vector3){0.19f,0.17f,0.15f};
+        fog   =(Vector3){0.46f,0.42f,0.38f};
+        fn=300.0f; ff=2300.0f;
+    }
+    else if(Map_IsDusk())
+    {   // low burning dusk sun
+        sunCol=(Vector3){1.28f,0.82f,0.52f};
+        amb   =(Vector3){0.22f,0.20f,0.23f};
+        fog   =(Vector3){0.70f,0.52f,0.42f};
+        fn=520.0f; ff=3200.0f;
     }
     else
     {
-        sunCol=(Vector3){1.15f,1.02f,0.86f};
-        amb   =(Vector3){0.24f,0.255f,0.29f};
-        fog   =(Vector3){0.70f,0.752f,0.82f};
-        fn=700.0f; ff=3600.0f;
+        sunCol=(Vector3){1.22f,1.08f,0.90f};
+        amb   =(Vector3){0.22f,0.235f,0.27f};
+        fog   =(Vector3){0.66f,0.72f,0.80f};
+        fn=650.0f; ff=3600.0f;
     }
     SetShaderValue(gLit,locSun,&SUN_DIR,SHADER_UNIFORM_VEC3);
     SetShaderValue(gLit,locSunCol,&sunCol,SHADER_UNIFORM_VEC3);
@@ -335,6 +354,14 @@ void DrawSabre(Vector3 pos, Quaternion q, float scale)
     DrawPart(P_BOX,C_GREY,M,MPart((Vector3){0,0.35f,4.6f},X,0,(Vector3){2.4f,0.1f,1.1f})); // horizontal stab
     DrawPart(P_CYL,C_DARK,M,MPart((Vector3){0,0,5.1f},X,-90*DEG2R,(Vector3){0.7f,1.0f,0.7f}));
     DrawPart(P_BOX,C_MARK,M,MPart((Vector3){1.8f,0.06f,0.7f},Y,-32*DEG2R,(Vector3){0.5f,0.04f,0.5f}));
+}
+
+// soft contact shadow: flat dark disc hugging the ground under every unit
+void DrawBlobShadow(Vector3 feet, float radius)
+{
+    float gy=Terrain_Height(feet.x,feet.z)+0.04f;
+    DrawPart(P_CYL,C_SHADOW,MatrixIdentity(),
+        MPart((Vector3){feet.x,gy,feet.z},(Vector3){1,0,0},0,(Vector3){radius,0.02f,radius}));
 }
 
 // ------------------------------------------------------------- soldiers (feet origin, facing -Z)
@@ -866,28 +893,97 @@ static Texture2D FlagTexture3D(int kind)
     return texFlag3D[kind];
 }
 
-// waving cloth built from vertical billboard strips. droop (radians) folds the
-// flag downward about its attached edge (0 = flying out, ~90deg = hanging down).
+// Waving cloth rendered as ONE continuous subdivided mesh (shared vertices),
+// so the flag never splits into strips. Vertices are re-uploaded every frame;
+// droop (radians) folds the sheet about its attached edge (0 = flying out,
+// 90deg = hanging straight down).
+#define FL_NX 26
+#define FL_NY 7
+typedef struct {
+    Mesh mesh; Material mat; int built;
+    float verts[(FL_NX+1)*(FL_NY+1)*3];
+} FlagSheet;
+static FlagSheet gSheets[6]; static int gSheetCursor=0;
+
 static void clothStrips(Camera3D cam,Texture2D tex,Vector3 attach,Vector3 dF,
                         float t,float FH,float FW,float droop)
 {
-    const int N=9; const float sw=FW/N;
-    float cs=cosf(droop), sn=sinf(droop), hs=1.0f-0.45f*sn;
-    BeginBlendMode(BLEND_ALPHA);
-    for(int i=0;i<N;i++)
+    (void)cam;
+    FlagSheet*fs=&gSheets[gSheetCursor]; gSheetCursor=(gSheetCursor+1)%6;
+    Mesh*m=&fs->mesh;
+    int nx=FL_NX, ny=FL_NY, nv=(nx+1)*(ny+1);
+    if(!fs->built)
     {
-        float frac=(float)(i+0.5f)/N;
-        float dist=sw*(i+0.5f);
-        float flut=sinf(t*5.5f-i*0.55f)*0.10f*frac*(1.0f-0.6f*sn);
-        float bulge=cosf(t*4.0f-i*0.5f)*0.16f*frac;
-        Vector3 pos=(Vector3){attach.x+dF.x*(dist*cs+bulge),
-                              attach.y-dist*sn+flut,
-                              attach.z+dF.z*(dist*cs+bulge)};
-        Rectangle src=(Rectangle){(float)i*tex.width/N,0,(float)tex.width/N+1,(float)tex.height};
-        DrawBillboardPro(cam,tex,src,pos,(Vector3){0,1,0},
-            (Vector2){sw*1.08f,FH*hs},(Vector2){sw*0.54f,FH*hs*0.5f},0,WHITE);
+        m->vertexCount=nv; m->triangleCount=nx*ny*2;
+        m->vertices=(float*)MemAlloc(sizeof(float)*3*nv);
+        m->normals =(float*)MemAlloc(sizeof(float)*3*nv);
+        m->texcoords=(float*)MemAlloc(sizeof(float)*2*nv);
+        m->colors  =(unsigned char*)MemAlloc(sizeof(unsigned char)*4*nv);
+        m->indices=(unsigned short*)MemAlloc(sizeof(unsigned short)*nx*ny*6);
+        int vi=0;
+        for(int iy=0;iy<=ny;iy++)for(int ix=0;ix<=nx;ix++)
+        {
+            m->texcoords[vi*2+0]=(float)ix/nx;
+            m->texcoords[vi*2+1]=(float)iy/ny;   // top edge samples the image top
+            m->colors[vi*4+0]=255; m->colors[vi*4+1]=255;
+            m->colors[vi*4+2]=255; m->colors[vi*4+3]=255;
+            vi++;
+        }
+        int ii=0;
+        for(int iy=0;iy<ny;iy++)for(int ix=0;ix<nx;ix++)
+        {
+            unsigned short a=(unsigned short)(iy*(nx+1)+ix), b=(unsigned short)(a+1),
+                           c=(unsigned short)(a+nx+1), d=(unsigned short)(c+1);
+            m->indices[ii++]=a;m->indices[ii++]=c;m->indices[ii++]=b;
+            m->indices[ii++]=b;m->indices[ii++]=c;m->indices[ii++]=d;
+        }
+        UploadMesh(m,1);   // dynamic: re-uploaded each frame
+        fs->mat=LoadMaterialDefault();
+        if(gLit.id>0)fs->mat.shader=gLit;
+        fs->mat.maps[MATERIAL_MAP_DIFFUSE].texture=tex;
+        fs->built=1;
     }
-    EndBlendMode();
+    fs->mat.maps[MATERIAL_MAP_DIFFUSE].texture=tex;
+
+    float cs=cosf(droop), sn=sinf(droop);
+    Vector3 up=(Vector3){0,1,0};
+    Vector3 side=vnorm(vcross(dF,up));     // axis across the sheet
+    Vector3 A=(Vector3){attach.x, attach.y+FH*0.5f, attach.z};  // top outer corner
+    int vi=0;
+    for(int iy=0;iy<=ny;iy++)
+    {
+        float v=(float)iy/ny;              // 0 top edge -> 1 bottom edge
+        for(int ix=0;ix<=nx;ix++)
+        {
+            float u=(float)ix/nx*FW;       // distance out from the pole
+            float free=u/FW;
+            float flut=sinf(t*5.5f-ix*0.5f+iy*0.25f)*0.16f*free*(1.0f-0.25f*sn);
+            float bulge=cosf(t*3.6f-ix*0.42f)*0.20f*free;
+            // rigid fold about the side axis + wind ripple
+            float ex=u*cs - v*FH*sn + bulge;          // along dF
+            float ey=-(v*FH*cs - u*sn) + flut;        // vertical (down positive)
+            m->vertices[vi*3+0]=A.x+dF.x*ex+side.x*flut*0.35f;
+            m->vertices[vi*3+1]=A.y+ey;
+            m->vertices[vi*3+2]=A.z+dF.z*ex+side.z*flut*0.35f;
+            vi++;
+        }
+    }
+    // smooth normals from grid tangents
+    for(int iy=0;iy<=ny;iy++)for(int ix=0;ix<=nx;ix++)
+    {
+        int i=iy*(nx+1)+ix;
+        int i0=i-(ix>0?1:0), i1=i+(ix<nx?1:0);
+        int j0=i-(iy>0?nx+1:0), j1=i+(iy<ny?nx+1:0);
+        Vector3 pu=vsub(((Vector3*)m->vertices)[i1],((Vector3*)m->vertices)[i0]);
+        Vector3 pv=vsub(((Vector3*)m->vertices)[j1],((Vector3*)m->vertices)[j0]);
+        Vector3 n=vnorm(vcross(pu,pv));
+        m->normals[i*3+0]=n.x; m->normals[i*3+1]=n.y; m->normals[i*3+2]=n.z;
+    }
+    UpdateMeshBuffer(*m,0,m->vertices,sizeof(float)*3*nv,0);
+    UpdateMeshBuffer(*m,2,m->normals, sizeof(float)*3*nv,0);
+    rlDisableBackfaceCulling();   // cloth is seen from both sides
+    DrawMesh(*m,fs->mat,MatrixIdentity());
+    rlEnableBackfaceCulling();
 }
 
 void DrawWavingFlag(Camera3D cam,Vector3 base,float yaw,int kind,float t,float poleH)

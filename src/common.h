@@ -67,7 +67,7 @@ enum { P_BOX=0, P_CYL, P_SPHERE, P_CONE, P_OCT, P_SHAPE_COUNT };
 enum {
     C_DARK=0,C_GREY,C_STEEL,C_BLACK,C_WHITE,C_RED,C_YELLOW,C_ORANGE,
     C_OLIVE,C_KHAKI,C_SKIN,C_WOOD,C_GREEN,C_BROWN,C_NAVY,C_SAND,
-    C_HELMET,C_GI,C_PVA,C_DARKOLIVE,C_RUDDER,C_GLASS,C_MARK,C_JETSILVER,C_BLOOD,C_PAL_COUNT
+    C_HELMET,C_GI,C_PVA,C_DARKOLIVE,C_RUDDER,C_GLASS,C_MARK,C_JETSILVER,C_BLOOD,C_SHADOW,C_PAL_COUNT
 };
 void   Scene_Load(void);
 void   Scene_Unload(void);
@@ -79,6 +79,7 @@ void   DrawSabre(Vector3 pos, Quaternion q, float scale);
 void   DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp, float phase);
 void   DrawSoldierDown(Vector3 feet, float yaw, int uniform, float scale);
 void   DrawVehicle(Vector3 pos, float yaw, int kind, float scale);
+void   DrawBlobShadow(Vector3 feet, float radius);
 void   DrawMissile(Vector3 pos, Quaternion q);
 void   DrawBomb(Vector3 pos, Quaternion q);
 void   DrawRifleView(Camera3D cam, int type, float kick);
@@ -170,6 +171,7 @@ int   Touch_PauseTap(float*x,float*y);  // fresh tap while pause overlay is up
 int   Touch_PauseMenuSelect(void);     // pause overlay: 1 resume, 2 quit
 void  Touch_DrawPauseMenu(void);
 void  Touch_Suppress(float seconds);    // swallow touches after a UI transition
+void  Touch_SetPaused(int paused);      // modal pause overlay: fingers are UI only
 int   Touch_IsTouch(void);
 
 // battle scenario: 0 = generic ridge assault, 1 = Chosin Reservoir / Ice Company
@@ -178,6 +180,8 @@ int  Map_IsNight(void);
 int  Map_IsSnow(void);
 int  Map_IsScorch(void);
 int  Map_IsDusk(void);
+int  Map_IsChosin(void);
+int  Touch_UITap(float*x,float*y);        // fresh finger landed this frame (pixels), for modal/menu UI
 
 // self test
 extern int gSelfTest;

@@ -12,21 +12,28 @@ static Model gSea = (Model){0};
 // one row per campaign (gScenario index): noise offset makes genuinely
 // different ground; ridgeMul/northMul shape the theatre's terrain.
 typedef struct { float ox,oz,ridgeMul,northMul,eastMul,flatR; } MapCfg;
-static const MapCfg MAPS[6]={
-    {  0.0f,   0.0f, 235.0f,1.0f,1.0f,170.0f}, // 0 山地攻坚 昼
-    { 41.7f, -23.3f, 255.0f,1.15f,0.7f,150.0f}, // 1 长津湖 雪夜
-    {-67.4f,  35.9f, 300.0f,1.35f,1.2f, 92.0f}, // 2 上甘岭 陡峭焦土
-    { 18.2f,  66.1f, 240.0f,1.05f,0.9f,140.0f}, // 3 松骨峰 黄昏雪
-    { 73.5f,  12.8f, 200.0f,0.8f,0.6f,170.0f}, // 4 汉江 夜渡泥滩
-    {-29.6f,-58.2f, 225.0f,0.95f,1.05f,150.0f}, // 5 三八线 阵地对峙
+static const MapCfg MAPS[12]={
+    {  0.0f,   0.0f, 225.0f,1.00f,1.00f,170.0f}, // 0  温井伏击战 昼·山谷
+    { 41.7f, -23.3f, 235.0f,1.05f,0.85f,150.0f}, // 1  云山攻坚战 昼·丘陵
+    {-67.4f,  35.9f, 258.0f,1.18f,0.70f,150.0f}, // 2  长津湖·冰雕连 雪夜
+    { 18.2f,  66.1f, 242.0f,1.06f,0.90f,140.0f}, // 3  松骨峰阻击战 雪·黄昏
+    { 73.5f,  12.8f, 305.0f,1.38f,1.20f, 92.0f}, // 4  上甘岭坑道战 陡峭焦土
+    {-88.1f,  47.6f, 215.0f,0.90f,0.70f,150.0f}, // 5  金城反击战 昼·河谷
+    {-29.6f, -58.2f, 205.0f,0.82f,0.60f,170.0f}, // 6  汉江夜渡 夜·泥滩
+    { 91.3f, -34.5f, 228.0f,0.96f,1.05f,150.0f}, // 7  三八线阵地战 硝烟对峙
+    { 55.2f,  88.4f, 268.0f,1.16f,0.95f,110.0f}, // 8  铁原阻击战 宽谷山地
+    {-52.7f,  71.9f, 232.0f,1.02f,0.80f,150.0f}, // 9  横城反击战 黄昏
+    { 6.8f,  -77.3f, 240.0f,1.04f,1.10f,130.0f}, // 10 平壤外围战
+    {-12.4f,  30.6f, 272.0f,1.22f,0.90f,120.0f}, // 11 黄草岭阻击战 雪·山口
 };
-static const MapCfg* mapCfg(void){ int s=gScenario; if(s<0||s>5)s=0; return &MAPS[s]; }
+static const MapCfg* mapCfg(void){ int s=gScenario; if(s<0||s>11)s=0; return &MAPS[s]; }
 
-// theme queries used by sky / environment / colours
-int Map_IsNight(void){ return gScenario==1||gScenario==4; }
-int Map_IsSnow(void){ return gScenario==1||gScenario==3; }
-int Map_IsScorch(void){ return gScenario==2||gScenario==5; }
-int Map_IsDusk(void){ return gScenario==3; }
+// theme queries used by sky / environment / colours / mission text
+int Map_IsNight(void){ return gScenario==2||gScenario==6; }
+int Map_IsSnow(void){ return gScenario==2||gScenario==3||gScenario==11; }
+int Map_IsScorch(void){ return gScenario==4||gScenario==7; }
+int Map_IsDusk(void){ return gScenario==3||gScenario==9; }
+int Map_IsChosin(void){ return gScenario==2; }
 
 static inline float heightRaw(float x, float z)
 {
