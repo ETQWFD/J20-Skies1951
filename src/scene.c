@@ -338,27 +338,43 @@ void DrawSabre(Vector3 pos, Quaternion q, float scale)
 }
 
 // ------------------------------------------------------------- soldiers (feet origin, facing -Z)
-void DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp)
+void DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp, float phase)
 {
     Quaternion q=QuaternionFromAxisAngle((Vector3){0,1,0}, yaw);
     Matrix M=root(feet,q,scale);
     int body = uniform==1 ? C_GI : (uniform==2 ? C_WHITE : C_PVA);
     int leg  = uniform==2 ? C_WHITE : C_DARKOLIVE;
+    // walk cycle: legs stride (pivot at hip), arms counter-sway, body bobs
+    float sw  = sinf(phase);                 // -1..1
+    float sw2 = sinf(phase+M_PI);
+    float stride = 0.42f;                    // ~24 degrees
+    float bob = fabsf(cosf(phase))*0.05f;
+    Quaternion legL = QuaternionFromAxisAngle((Vector3){1,0,0}, sw*stride);
+    Quaternion legR = QuaternionFromAxisAngle((Vector3){1,0,0}, sw2*stride);
     Quaternion aim = QuaternionFromAxisAngle((Vector3){1,0,0}, rifleUp? -78*DEG2R:12*DEG2R);
-    DrawPart(P_BOX,leg,M,MPart((Vector3){-0.13f,0.42f,0},(Vector3){1,0,0},0,(Vector3){0.17f,0.84f,0.2f}));
-    DrawPart(P_BOX,leg,M,MPart((Vector3){ 0.13f,0.42f,0},(Vector3){1,0,0},0,(Vector3){0.17f,0.84f,0.2f}));
-    DrawPart(P_BOX,body,M,MPart((Vector3){0,1.2f,0},(Vector3){1,0,0},0,(Vector3){0.54f,0.74f,0.32f}));
-    DrawPart(P_BOX,C_BROWN,M,MPart((Vector3){0,1.18f,0.24f},(Vector3){1,0,0},0,(Vector3){0.46f,0.5f,0.16f})); // pack
-    // arms
-    DrawPart(P_BOX,body,M,MPartQ((Vector3){-0.36f,1.42f,-0.02f},aim,(Vector3){0.15f,0.62f,0.17f}));
-    DrawPart(P_BOX,body,M,MPartQ((Vector3){ 0.36f,1.42f,-0.02f},aim,(Vector3){0.15f,0.62f,0.17f}));
-    DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){0,1.74f,0},(Vector3){0,1,0},0,(Vector3){0.34f,0.38f,0.34f}));
-    if (uniform==1) DrawPart(P_SPHERE,C_HELMET,M,MPart((Vector3){0,1.87f,-0.01f},(Vector3){1,0,0},0,(Vector3){0.46f,0.22f,0.46f}));
-    else            DrawPart(P_SPHERE,(uniform==2?C_WHITE:C_KHAKI),M,MPart((Vector3){0,1.86f,0.0f},(Vector3){1,0,0},0,(Vector3){0.4f,0.16f,0.4f})); // cotton cap
-    // rifle
+    Quaternion armL = QuaternionMultiply(aim,QuaternionFromAxisAngle((Vector3){1,0,0}, sw2*0.10f));
+    Quaternion armR = QuaternionMultiply(aim,QuaternionFromAxisAngle((Vector3){1,0,0}, sw*0.10f));
+    // legs (box pivot pulled up toward the hip so the stride rotates from the hip)
+    DrawPart(P_BOX,leg,M,MPartQ((Vector3){-0.13f,0.50f,0.0f},legL,(Vector3){0.17f,0.84f,0.2f}));
+    DrawPart(P_BOX,leg,M,MPartQ((Vector3){ 0.13f,0.50f,0.0f},legR,(Vector3){0.17f,0.84f,0.2f}));
+    // boots
+    DrawPart(P_BOX,C_BLACK,M,MPartQ((Vector3){-0.13f,0.10f,-0.04f},legL,(Vector3){0.19f,0.16f,0.30f}));
+    DrawPart(P_BOX,C_BLACK,M,MPartQ((Vector3){ 0.13f,0.10f,-0.04f},legR,(Vector3){0.19f,0.16f,0.30f}));
+    DrawPart(P_BOX,body,M,MPart((Vector3){0,1.2f+bob,0},(Vector3){1,0,0},0,(Vector3){0.54f,0.74f,0.32f}));
+    // belt + ammo bandolier (PVA) / web gear (GI)
+    DrawPart(P_BOX,C_DARK,M,MPart((Vector3){0,1.02f+bob,0},(Vector3){1,0,0},0,(Vector3){0.56f,0.10f,0.34f}));
+    if(uniform!=1) DrawPart(P_BOX,C_BROWN,M,MPart((Vector3){0,1.32f+bob,0.17f},(Vector3){1,0,0},0,(Vector3){0.20f,0.46f,0.05f}));
+    DrawPart(P_BOX,C_BROWN,M,MPart((Vector3){0,1.18f+bob,0.24f},(Vector3){1,0,0},0,(Vector3){0.46f,0.5f,0.16f})); // pack
+    // arms (counter-sway on top of the aim pose)
+    DrawPart(P_BOX,body,M,MPartQ((Vector3){-0.36f,1.42f+bob,-0.02f},armL,(Vector3){0.15f,0.62f,0.17f}));
+    DrawPart(P_BOX,body,M,MPartQ((Vector3){ 0.36f,1.42f+bob,-0.02f},armR,(Vector3){0.15f,0.62f,0.17f}));
+    DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){0,1.74f+bob,0},(Vector3){0,1,0},0,(Vector3){0.32f,0.36f,0.32f}));
+    if (uniform==1) DrawPart(P_SPHERE,C_HELMET,M,MPart((Vector3){0,1.88f+bob,-0.01f},(Vector3){1,0,0},0,(Vector3){0.46f,0.22f,0.46f}));
+    else            DrawPart(P_SPHERE,(uniform==2?C_WHITE:C_KHAKI),M,MPart((Vector3){0,1.86f+bob,0.0f},(Vector3){1,0,0},0,(Vector3){0.4f,0.16f,0.4f})); // cotton cap
+    // rifle (rides the aim pose, small bob)
     Quaternion rq = QuaternionFromAxisAngle((Vector3){1,0,0}, rifleUp?-80*DEG2R:10*DEG2R);
-    DrawPart(P_BOX,C_BLACK,M,MPartQ((Vector3){0.14f,1.4f,-0.4f},rq,(Vector3){0.07f,0.07f,1.0f}));
-    DrawPart(P_BOX,C_WOOD,M,MPartQ((Vector3){0.14f,1.42f,-0.05f},rq,(Vector3){0.09f,0.1f,0.42f}));
+    DrawPart(P_BOX,C_BLACK,M,MPartQ((Vector3){0.14f,1.40f+bob,-0.4f},rq,(Vector3){0.07f,0.07f,1.0f}));
+    DrawPart(P_BOX,C_WOOD,M,MPartQ((Vector3){0.14f,1.42f+bob,-0.05f},rq,(Vector3){0.09f,0.1f,0.42f}));
 }
 
 // fallen soldier: body lying flat on its back along local +Z
@@ -454,6 +470,34 @@ void DrawVehicle(Vector3 pos, float yaw, int kind, float scale)
 
 // ------------------------------------------------------------- first-person rifle
 static Vector3 sMuzzle;
+static float sSwingT=0;                 // >0 while a blade/fist swing is playing
+#define SWING_DUR 0.28f
+void Weapon_SwingTick(void){ sSwingT=SWING_DUR; }
+void Weapon_AnimUpdate(float dt){ if(sSwingT>0){ sSwingT-=dt; if(sSwingT<0)sSwingT=0; } }
+
+// own legs striding at the bottom of the view (so a charge reads as a run)
+void DrawFirstPersonLegs(Camera3D cam, int moving, float phase)
+{
+    if(!moving) return;
+    Vector3 f=vnorm((Vector3){cam.target.x-cam.position.x,0,cam.target.z-cam.position.z});
+    Vector3 r=vnorm(vcross(f,cam.up));
+    float sw=sinf(phase);
+    Vector3 hip=vadd(cam.position, vadd(vmul(f,0.62f), vmul(cam.up,-1.02f)));
+    for(int side=-1;side<=1;side+=2)
+    {
+        float s = side<0?sw:-sw;
+        Quaternion qL=QuaternionMultiply(
+            QuaternionFromAxisAngle((Vector3){0,1,0},atan2f(-f.x,-f.z)),
+            QuaternionFromAxisAngle((Vector3){1,0,0}, s*0.55f));
+        Vector3 c=vadd(hip, vmul(r,0.17f*side));
+        DrawPart(P_BOX,C_PVA,MatrixMultiply(QuaternionToMatrix(qL),MatrixTranslate(c.x,c.y,c.z)),
+                 MPart((Vector3){0,-0.42f,0},(Vector3){1,0,0},0,(Vector3){0.20f,0.84f,0.24f}));
+        Vector3 fb=vadd(c,vmul(r,0.0f));
+        DrawPart(P_BOX,C_BLACK,MatrixMultiply(QuaternionToMatrix(qL),MatrixTranslate(fb.x,fb.y,fb.z)),
+                 MPart((Vector3){0,-0.86f,-0.05f},(Vector3){1,0,0},0,(Vector3){0.22f,0.16f,0.32f}));
+    }
+}
+
 void DrawRifleView(Camera3D cam, int type, float kick)
 {
     Vector3 f=vnorm(vsub(cam.target,cam.position));
@@ -469,6 +513,23 @@ void DrawRifleView(Camera3D cam, int type, float kick)
     float pitch=asinf(clampf(refF.y,-1,1)) + kick*0.10f;
     Quaternion q=QuaternionMultiply(QuaternionFromAxisAngle((Vector3){0,1,0},yaw),
                                     QuaternionFromAxisAngle((Vector3){1,0,0},pitch));
+    // blade / fist swing: a fast raise-and-chop (blade) or jab (fists)
+    if((type==2||type==3) && sSwingT>0)
+    {
+        float ph=1.0f-sSwingT/SWING_DUR;          // 0 start -> 1 end
+        float beat=sinf(ph*M_PI);                 // 0..1..0
+        if(type==2)
+        {
+            q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){1,0,0},-1.45f*beat)); // raise overhead then chop
+            q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){0,1,0}, 0.6f*(ph-0.5f))); // diagonal slash
+            grip=vadd(grip,vmul(f,0.22f*beat));
+        }
+        else
+        {
+            q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){1,0,0},-0.5f*beat));
+            grip=vadd(grip,vmul(f,0.34f*beat));   // jab straight out
+        }
+    }
     Matrix M=MatrixMultiply(QuaternionToMatrix(q),MatrixTranslate(grip.x,grip.y,grip.z));
     if(type==0)
     {
@@ -556,6 +617,14 @@ void FX_Fireball(Vector3 p, float sc)
 {
     P k={0}; k.p=p; k.v=(Vector3){0,4,0}; k.life=k.max=0.35f; k.size=9*sc; k.grow=26*sc; k.tex=1; k.col=(Color){255,210,120,255}; spawn(k);
 }
+// persistent flame for a burning wreck: longer-lived, flickering tongues
+void FX_FireLong(Vector3 p, float sc)
+{
+    P k={0}; k.p=(Vector3){p.x+frand(-0.5,0.5)*sc,p.y,p.z+frand(-0.5,0.5)*sc};
+    k.v=(Vector3){frand(-1.2,1.2),frand(5,10),frand(-1.2,1.2)};
+    k.life=k.max=frand(0.7f,1.3f); k.size=frand(2.2f,3.6f)*sc; k.grow=3.0f*sc; k.tex=1;
+    k.col=(irand(0,2)?(Color){255,150,40,235}:(Color){255,210,110,235}); spawn(k);
+}
 void FX_Smoke(Vector3 p, float sc)
 {
     P k={0}; k.p=p; k.v=(Vector3){frand(-2,2),frand(6,14),frand(-2,2)}; k.life=k.max=frand(1.4f,2.6f);
@@ -641,9 +710,17 @@ void Env_DrawSky2D(void)
 {
     int sw=GetScreenWidth(), sh=GetScreenHeight();
     Color zen,mid,hor;
-    if(gScenario==1)
+    if(Map_IsNight())
     {   // cold moonlit winter night
         zen=(Color){8,12,28,255}; mid=(Color){22,30,54,255}; hor=(Color){60,70,96,255};
+    }
+    else if(Map_IsDusk())
+    {   // smoke-stained winter dusk over the pass
+        zen=(Color){30,34,52,255}; mid=(Color){96,72,72,255}; hor=(Color){196,120,74,255};
+    }
+    else if(Map_IsScorch())
+    {   // daylight choked by battle smoke: slate sky, ash-brown horizon
+        zen=(Color){74,80,88,255}; mid=(Color){120,116,110,255}; hor=(Color){168,150,128,255};
     }
     else
     {
@@ -667,43 +744,61 @@ void Env_DrawSky2D(void)
 }
 
 // national flag (PRC) and PLA "August 1st" flag, pinned to the upper-left HUD
-static void flagStar(float cx,float cy,float r,Color c)
+static int inPolyHud(float px,float py,const float*vx,const float*vy,int n)
 {
-    Vector2 v[10];
-    for(int i=0;i<10;i++)
-    {
-        float a=-M_PI/2.0f+i*M_PI/5.0f, rr=(i&1)?r*0.42f:r;
-        v[i]=(Vector2){cx+cosf(a)*rr,cy+sinf(a)*rr};
-    }
-    DrawTriangleFan(v,10,c);
+    int in=0;
+    for(int i=0,j=n-1;i<n;j=i++)
+        if(((vy[i]>py)!=(vy[j]>py)) &&
+           (px < (vx[j]-vx[i])*(py-vy[i])/(vy[j]-vy[i]+1e-9f)+vx[i])) in=!in;
+    return in;
+}
+static Texture2D hudStarTex(void)
+{
+    static Texture2D tx=(Texture2D){0};
+    if(tx.id) return tx;
+    const int S=64; Image im=GenImageColor(S,S,BLANK);
+    unsigned char*d=im.data; float vx[10],vy[10];
+    for(int i=0;i<10;i++){ float a=-M_PI/2+i*M_PI/5, rr=(i&1)?S*0.20f:S*0.46f;
+        vx[i]=S*0.5f+cosf(a)*rr; vy[i]=S*0.5f+sinf(a)*rr; }
+    for(int y=0;y<S;y++)for(int x=0;x<S;x++)
+        if(inPolyHud(x+0.5f,y+0.5f,vx,vy,10)){ int o=(y*S+x)*4; d[o]=255;d[o+1]=224;d[o+2]=82;d[o+3]=255; }
+    tx=LoadTextureFromImage(im); UnloadImage(im); return tx;
+}
+static void drawStar2D(float cx,float cy,float r)
+{
+    Texture2D t=hudStarTex();
+    DrawTexturePro(t,(Rectangle){0,0,64,64},(Rectangle){cx-r,cy-r,2*r,2*r},(Vector2){0,0},0,WHITE);
 }
 void DrawCornerFlags(void)
 {
-    int w=54,h=36,x0=104,y=10;
-    Color red=(Color){222,41,16,255}, yel=(Color){255,224,82,255};
-    const char* name[2]={"中华人民共和国","中国人民解放军"};
+    int w=56,h=38,x0=108,y=10;
+    Color red=(Color){222,41,16,255};
+    const char* name[2]={"五星红旗","八一军旗"};
     for(int f=0;f<2;f++)
     {
-        int x=x0+f*(w+12);
+        int x=x0+f*(w+46);
         DrawRectangle(x,y,w,h,red);
-        float cx=x+w*0.25f, cy=y+h*0.35f;
-        flagStar(cx,cy,h*0.17f,yel);
+        DrawRectangleLines(x,y,w,h,(Color){255,220,150,200});
+        float cx=x+w*0.26f, cy=y+h*0.38f;
         if(f==0)
         {
-            static const float sp[4][2]={{0.42f,0.13f},{0.50f,0.30f},{0.50f,0.50f},{0.42f,0.64f}};
-            for(int i=0;i<4;i++) flagStar(x+w*sp[i][0],y+h*sp[i][1],h*0.06f,yel);
+            drawStar2D(cx,cy,h*0.30f);
+            static const float sp[4][2]={{0.46f,0.16f},{0.55f,0.34f},{0.55f,0.56f},{0.46f,0.72f}};
+            for(int i=0;i<4;i++) drawStar2D(x+w*sp[i][0],y+h*sp[i][1],h*0.10f);
         }
         else
         {
-            DrawTextEx(GameFont(),"八一",(Vector2){cx-11,cy+h*0.18f},12,0,yel);
+            drawStar2D(cx,cy,h*0.26f);
+            DrawTextEx(GameFont(),"八一",(Vector2){cx+7,cy-7},13,0,(Color){255,224,82,255});
         }
         Vector2 sz=MeasureTextEx(GameFont(),name[f],10,1);
-        DrawTextEx(GameFont(),name[f],(Vector2){x+(w-sz.x)*0.5f,(float)y+h+2},10,1,(Color){255,235,200,235});
+        DrawRectangle((int)(x+(w-sz.x)*0.5f-2),y+h+1,(int)sz.x+4,13,(Color){0,0,0,90});
+        DrawTextEx(GameFont(),name[f],(Vector2){x+(w-sz.x)*0.5f,(float)y+h+2},10,1,(Color){255,235,200,240});
     }
 }
 
 // ------------------------------------------------- 3D waving national flag
-static Texture2D texFlag3D[2]={{0}};
+static Texture2D texFlag3D[3]={{0}};
 
 static int ptInPoly(float px,float py,const float*vx,const float*vy,int n)
 {
@@ -750,13 +845,49 @@ static Texture2D FlagTexture3D(int kind)
             float rot=atan2f(uy-sy,ux-sx)+M_PI*0.5f;
             plotStar(d,W,H,sx,sy,H*0.062f,rot,yel); }
     }
-    else
+    else if(kind==1)
     {   // PLA "August 1st" — numerals beside the star
         ImageDrawText(&img,"81",(int)(ux-10),(int)(uy-12),34,yel);
+    }
+    else
+    {   // US colours: thirteen stripes + blue canton with white stars
+        ImageClearBackground(&img,(Color){180,30,30,255});
+        int stripeH=H/13;
+        for(int s=0;s<13;s++) if(s&1)
+            ImageDrawRectangle(&img,0,s*stripeH,W,stripeH,(Color){240,240,240,255});
+        int cw=(int)(W*0.42f), ch=stripeH*7;
+        ImageDrawRectangle(&img,0,0,cw,ch,(Color){40,48,96,255});
+        for(int ry=0;ry<4;ry++)for(int rx=0;rx<5;rx++)
+        { float sx=(rx+0.55f)*cw/5.0f, sy=(ry+0.6f)*ch/4.0f;
+            plotStar(d,W,H,sx,sy,H*0.035f,0,(Color){245,245,245,255}); }
     }
     texFlag3D[kind]=LoadTextureFromImage(img);
     UnloadImage(img);
     return texFlag3D[kind];
+}
+
+// waving cloth built from vertical billboard strips. droop (radians) folds the
+// flag downward about its attached edge (0 = flying out, ~90deg = hanging down).
+static void clothStrips(Camera3D cam,Texture2D tex,Vector3 attach,Vector3 dF,
+                        float t,float FH,float FW,float droop)
+{
+    const int N=9; const float sw=FW/N;
+    float cs=cosf(droop), sn=sinf(droop), hs=1.0f-0.45f*sn;
+    BeginBlendMode(BLEND_ALPHA);
+    for(int i=0;i<N;i++)
+    {
+        float frac=(float)(i+0.5f)/N;
+        float dist=sw*(i+0.5f);
+        float flut=sinf(t*5.5f-i*0.55f)*0.10f*frac*(1.0f-0.6f*sn);
+        float bulge=cosf(t*4.0f-i*0.5f)*0.16f*frac;
+        Vector3 pos=(Vector3){attach.x+dF.x*(dist*cs+bulge),
+                              attach.y-dist*sn+flut,
+                              attach.z+dF.z*(dist*cs+bulge)};
+        Rectangle src=(Rectangle){(float)i*tex.width/N,0,(float)tex.width/N+1,(float)tex.height};
+        DrawBillboardPro(cam,tex,src,pos,(Vector3){0,1,0},
+            (Vector2){sw*1.08f,FH*hs},(Vector2){sw*0.54f,FH*hs*0.5f},0,WHITE);
+    }
+    EndBlendMode();
 }
 
 void DrawWavingFlag(Camera3D cam,Vector3 base,float yaw,int kind,float t,float poleH)
@@ -766,37 +897,52 @@ void DrawWavingFlag(Camera3D cam,Vector3 base,float yaw,int kind,float t,float p
         MPart((Vector3){base.x,base.y+poleH*0.5f,base.z},(Vector3){1,0,0},0,(Vector3){0.10f,poleH,0.10f}));
     DrawPart(P_SPHERE,C_YELLOW,MatrixIdentity(),
         MPart((Vector3){base.x,base.y+poleH+0.12f,base.z},(Vector3){1,0,0},0,(Vector3){0.16f,0.16f,0.16f}));
-    // cloth as vertical billboard strips; outer edge flutters more
-    Texture2D tex=FlagTexture3D(kind);
-    const int N=9;
-    const float FW=4.2f,FH=2.7f, sw=FW/N;
+    const float FW=4.2f,FH=2.7f;
     Vector3 dF=(Vector3){cosf(yaw),0,-sinf(yaw)};
     Vector3 attach=(Vector3){base.x,base.y+poleH-FH*0.5f-0.05f,base.z};
-    BeginBlendMode(BLEND_ALPHA);
-    for(int i=0;i<N;i++)
+    clothStrips(cam,FlagTexture3D(kind),attach,dF,t,FH,FW,0.0f);
+}
+
+// objective crest: enemy colours fly until captured; on capture they fold 90
+// degrees while the Five-star Red Flag is hoisted and catches the wind.
+void DrawObjectiveFlags(Camera3D cam,Vector3 base,int captured,float fallT,float t)
+{
+    const float poleH=9.0f;
+    DrawPart(P_CYL,C_DARK,MatrixIdentity(),
+        MPart((Vector3){base.x,base.y+poleH*0.5f,base.z},(Vector3){1,0,0},0,(Vector3){0.13f,poleH,0.13f}));
+    DrawPart(P_SPHERE,C_YELLOW,MatrixIdentity(),
+        MPart((Vector3){base.x,base.y+poleH+0.15f,base.z},(Vector3){1,0,0},0,(Vector3){0.2f,0.2f,0.2f}));
+    Vector3 dF=(Vector3){1,0,0};
+    // enemy colours fly until they are struck, then fold down over ~1.2s
+    if(fallT<1.5f)
     {
-        float frac=(float)(i+0.5f)/N;
-        float flut=sinf(t*5.5f-i*0.55f)*0.10f*frac;
-        float bulge=cosf(t*4.0f-i*0.5f)*0.16f*frac;
-        Vector3 pos=(Vector3){attach.x+dF.x*(sw*(i+0.5f))+dF.x*bulge,
-                              attach.y+flut,
-                              attach.z+dF.z*(sw*(i+0.5f))+dF.z*bulge};
-        Rectangle src=(Rectangle){(float)i*tex.width/N,0,(float)tex.width/N+1,(float)tex.height};
-        DrawBillboardPro(cam,tex,src,pos,(Vector3){0,1,0},
-            (Vector2){sw*1.08f,FH},(Vector2){sw*0.54f,FH*0.5f},0,WHITE);
+        float droop=clampf(fallT/1.2f,0,1)*(M_PI*0.5f);
+        Vector3 ea=(Vector3){base.x,base.y+poleH-1.5f,base.z};
+        clothStrips(cam,FlagTexture3D(2),ea,dF,t,2.7f,4.4f,droop);
     }
-    EndBlendMode();
+    // our flag is hoisted up the pole once theirs starts falling
+    if(captured && fallT>0.35f)
+    {
+        float hh=clampf((fallT-0.35f)/1.3f,0,1);
+        float yTop=base.y+1.6f+hh*(poleH-3.6f);
+        Vector3 oa=(Vector3){base.x,yTop,base.z+0.05f};
+        clothStrips(cam,FlagTexture3D(0),oa,dF,t,2.4f,3.8f,0.0f);
+    }
 }
 
 void Env_Draw(Camera3D cam)
 {
     Vector3 sunPos=vadd(cam.position, vmul(vnorm(SUN_DIR),-6800.0f));
     BeginBlendMode(BLEND_ADDITIVE);
-    if(gScenario==1)
+    if(Map_IsNight())
     {   // pale moon + cold halo
         DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},sunPos,(Vector3){0,1,0},(Vector2){220,220},(Vector2){110,110},0,(Color){226,234,255,255});
         DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},sunPos,(Vector3){0,1,0},(Vector2){520,520},(Vector2){260,260},0,(Color){150,170,220,60});
     }
+    else if(Map_IsDusk())
+    DrawBillboardPro(cam,texFire,(Rectangle){0,0,64,64},sunPos,(Vector3){0,1,0},(Vector2){520,520},(Vector2){260,260},0,(Color){255,150,90,255});
+    else if(Map_IsScorch())
+    DrawBillboardPro(cam,texFire,(Rectangle){0,0,64,64},sunPos,(Vector3){0,1,0},(Vector2){520,520},(Vector2){260,260},0,(Color){235,214,180,210});
     else
     DrawBillboardPro(cam,texFire,(Rectangle){0,0,64,64},sunPos,(Vector3){0,1,0},(Vector2){520,520},(Vector2){260,260},0,(Color){255,250,225,255});
     EndBlendMode();
@@ -804,7 +950,10 @@ void Env_Draw(Camera3D cam)
     for (int i=0;i<NCLOUD;i++)
     {
         float w=clouds[i].s*2.4f, h=clouds[i].s*0.85f;
-        Color c = gScenario==1 ? (Color){190,200,224,54} : (Color){255,255,255,92};
+        Color c = Map_IsNight() ? (Color){190,200,224,54}
+                : Map_IsScorch()? (Color){96,94,92,120}
+                : Map_IsDusk()  ? (Color){120,104,104,96}
+                : (Color){255,255,255,92};
         DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},clouds[i].p,(Vector3){0,1,0},(Vector2){w,h},(Vector2){w*0.5f,h*0.5f},0,c);
         Vector3 p2=(Vector3){clouds[i].p.x+clouds[i].s*0.7f,clouds[i].p.y+18,clouds[i].p.z+60};
         DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},p2,(Vector3){0,1,0},(Vector2){w*0.7f,h*0.6f},(Vector2){w*0.35f,h*0.3f},0,(Color){255,255,255,70});

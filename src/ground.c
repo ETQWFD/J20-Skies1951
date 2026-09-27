@@ -23,6 +23,7 @@ typedef struct {
 static Avatar av[BNET_MAXPLY];          // index = player id (1..3)
 static BnWorld gSnap;                   // latest world snapshot (client)
 static int   gHaveSnap=0, gNetWin=0, gAvatarShots=0;
+static float gAnimClock=0;              // shared walk-cycle clock for rendering
 static int   avThreat(const Vector3*chest,Vector3*outPos);
 
 
@@ -43,7 +44,7 @@ static int   grenades=1;                     // one grenade each man carries
 typedef struct { Vector3 p,v; int on,landed; float age; } Gre;
 static Gre gre={0}; static int greCharging=0; static float greHold=0;
 static float stepAcc=0, ambT=0;              // footsteps / distant battle
-static float celebrate=0; static int planter=-1, planted=0, bugled=0; // victory flag ceremony
+static float celebrate=0; static int planter=-1, planted=0, bugled=0; static float objFall=0; // victory flag ceremony
 static float hitMark, dmgCd, holdT, timeAlive;
 static float ads;        // 0..1 aim-down-sights (right mouse / scope button)
 static int   adsMouseHold=0;
@@ -59,6 +60,24 @@ static Camera3D cam; static int frame=0;
 static int jumps=0;            // ground jumps used (single jump only)
 static float introT=0;         // mission intro banner timer
 static const Vector3 OBJV={0,0,-380.0f};
+// persistent burning / crater points across the battlefield
+#define NBURN 10
+static const float BURN_PT[NBURN][2]={
+    {-120,-40},{60,-90},{-200,-150},{170,-180},{-60,-230},
+    {90,-270},{-150,-310},{40,-350},{200,-300},{-260,-120}};
+static float burnT=0; static int burnI=0;
+static void battleFX(float dt)
+{
+    burnT-=dt;
+    if(burnT<=0)
+    {
+        burnT=0.10f;
+        float bx=BURN_PT[burnI][0], bz=BURN_PT[burnI][1]; burnI=(burnI+1)%NBURN;
+        Vector3 p=(Vector3){bx,Terrain_Height(bx,bz)+1.0f,bz};
+        FX_FireLong(p,1.25f);
+        if((burnI&1)==0) FX_Smoke((Vector3){p.x,p.y+2.0f,p.z},1.7f);
+    }
+}
 static const char* CRIES[]={"冲啊——！","跟我上！","守住阵地！","为了祖国——！","压过去！"};
 
 // fictional last wishes — homage to the frozen company at Chosin, not a quote of a real person
@@ -153,7 +172,7 @@ static void melee(void)
 {
     if(meleeCd>0)return;
     int blade=(weapon==2);
-    meleeCd=blade?0.55f:0.40f; meleeSwing=1.0f;
+    meleeCd=blade?0.55f:0.40f; meleeSwing=1.0f; Weapon_SwingTick();
     float reach=blade?2.7f:1.9f, dmg=blade?120.0f:20.0f;
     Vector3 d=aimDir();
     int best=-1; float bd=1e9f;
@@ -501,6 +520,8 @@ static void updatePlayer(float dt)
     }
     float gy=Terrain_Height(eye.x,eye.z)+1.68f;
     if(eye.y<gy){eye.y=gy; if(pvel.y<=0.0f){pvel.y=0; jumps=0;}}
+    // glue the feet to the ground when not airborne: no sinking / seeing under
+    if(jumps==0 && eye.y>gy+0.05f) eye.y=gy;
     if(fabsf(eye.x)>WORLD_HALF-10)eye.x=WORLD_HALF-10;
     if(fabsf(eye.z)>WORLD_HALF-10)eye.z=WORLD_HALF-10;
     // footstep cadence while actually moving on the ground
@@ -948,7 +969,7 @@ static void drawNetBodies(void)
     {
         for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active)
         {
-            if(av[id].alive) DrawSoldier(av[id].pos,-av[id].yaw,0,1.0f,1);
+            if(av[id].alive) DrawSoldier(av[id].pos,-av[id].yaw,0,1.0f,1,gAnimClock*9.0f+id*1.7f);
             else DrawSoldierDown(av[id].pos,av[id].yaw,0,1.0f);
         }
     }
@@ -960,7 +981,7 @@ static void drawNetBodies(void)
             if(p->id==(uint8_t)gCoopId)continue;   // never draw yourself
             Vector3 pp={p->x,p->y-1.68f,p->z};
             float ya=p->yawC/1000.0f;
-            if(p->state==1) DrawSoldier(pp,-ya,0,1.0f,1);
+            if(p->state==1) DrawSoldier(pp,-ya,0,1.0f,1,gAnimClock*9.0f+p->id*1.7f);
             else DrawSoldierDown(pp,ya,0,1.0f);
         }
     }
@@ -971,15 +992,17 @@ void Ground_Run(int *outMode,int *outEnding)
     memset(foes,0,sizeof(foes)); memset(pals,0,sizeof(pals));
     spawnBattle();
     eye=(Vector3){0,0,180}; eye.y=Terrain_Height(0,180)+1.68f;
-    yaw=0; pitch=-0.05f; hp=100; weapon=0;
+    if(gFlagTest){ eye=(Vector3){26,0,-330}; eye.y=Terrain_Height(26,-330)+1.68f; }
+    yaw=gFlagTest?0.18f:0; pitch=-0.05f; hp=100; weapon=0;
     mag[0]=5; mag[1]=30; reserve[0]=0; reserve[1]=70;   // rifle 5 total, AKM 100 total
     reload=0; reloadTake=0; fireCd=0;
     grenades=1; gre=(Gre){0}; greCharging=0; greHold=0;
     meleeCd=meleeSwing=0; stepAcc=0; ambT=3.0f;
-    celebrate=0; planter=-1; planted=0; bugled=0; talkOpen=0; talkPage=0;
+    celebrate=0; planter=-1; planted=0; bugled=0; objFall=0; talkOpen=0; talkPage=0;
     foesKilled=0; hitMark=0; dmgCd=0; holdT=0; timeAlive=0; frame=0; pvel=v3(0,0,0); ads=0; paused=0; kickP=kickY=gunKick=0; headMsgT=0;
     cam=(Camera3D){0}; cam.fovy=72; cam.projection=CAMERA_PERSPECTIVE; cam.up=(Vector3){0,1,0};
     jumps=0; introT=gScenario==1?7.0f:3.5f;
+    if(gFlagTest){ planted=1; celebrate=5.0f; objFall=0; bugled=0; introT=0; }
     if(gCoopRole==1) netHostInit();
     if(gCoopRole==2){ gHaveSnap=0; gNetWin=0; }
     DisableCursor();
@@ -988,7 +1011,8 @@ void Ground_Run(int *outMode,int *outEnding)
     int endId=0;
     while(!WindowShouldClose())
     {
-        float dt=clampf(GetFrameTime(),0,0.033f); frame++; timeAlive+=dt;
+        float dt=clampf(GetFrameTime(),0,0.033f); frame++; timeAlive+=dt; gAnimClock=timeAlive;
+        Weapon_AnimUpdate(dt);
         Touch_Update(1);
         if(IsKeyPressed(KEY_ESCAPE)){ EnableCursor(); *outMode=0; return; }
         if(IsKeyPressed(KEY_ESCAPE)){ EnableCursor(); *outMode=0; return; }
@@ -1009,8 +1033,8 @@ void Ground_Run(int *outMode,int *outEnding)
         else if(paused)
         {
             int pm=Touch_PauseMenuSelect();
-            if(pm==2||IsKeyPressed(KEY_Q)){ EnableCursor(); *outMode=0; return; }
-            if(pm==1||IsKeyPressed(KEY_ENTER)||IsKeyPressed(KEY_KP_ENTER)) paused=0;
+            if(pm==2||IsKeyPressed(KEY_Q)){ Touch_Suppress(0.6f); EnableCursor(); *outMode=0; return; }
+            if(pm==1||IsKeyPressed(KEY_ENTER)||IsKeyPressed(KEY_KP_ENTER)){ paused=0; Touch_Suppress(0.25f); }
         }
 
         int frozen=(paused||talkOpen||celebrate>0);
@@ -1019,14 +1043,14 @@ void Ground_Run(int *outMode,int *outEnding)
             {
                 // client: predict own walk, send intent, receive authoritative world
                 updatePlayer(dt); netClientSend(); netClientRecv();
-                FX_Update(dt); Env_Update(dt); if(introT>0)introT-=dt;
+                FX_Update(dt); battleFX(dt); Env_Update(dt); if(introT>0)introT-=dt;
             }
             else
             {
                 if(gCoopRole==1) netHostRecv(dt);
                 updatePlayer(dt); updateFoes(dt); updatePals(dt);
                 if(gCoopRole==1) netHostSend(celebrate>0?1:0);
-                FX_Update(dt); Env_Update(dt); if(introT>0)introT-=dt;
+                FX_Update(dt); battleFX(dt); Env_Update(dt); if(introT>0)introT-=dt;
                 // distant, off-screen battle: random booms and smoke over the ridge
                 if(!gSelfTest){ ambT-=dt;
                     if(ambT<=0){ ambT=frand(4,9); Sfx_Boom(0.22f);
@@ -1038,7 +1062,7 @@ void Ground_Run(int *outMode,int *outEnding)
         {
             // the planter (squad leader, else a random survivor, else the player)
             // runs to the crest and raises the red flag; the bugle sounds once.
-            celebrate-=dt;
+            celebrate-=dt; objFall+=dt;
             if(planter>=0 && pals[planter].alive)
             {
                 Man*s=&pals[planter];
@@ -1052,7 +1076,7 @@ void Ground_Run(int *outMode,int *outEnding)
             if(planted&&!bugled){bugled=1;Sfx_Bugle();}
             if(gCoopRole==1) netHostSend(1);
             if(gCoopRole==2){ netClientSend(); netClientRecv(); }
-            FX_Update(dt); Env_Update(dt);
+            FX_Update(dt); battleFX(dt); Env_Update(dt);
             if(celebrate<=0) celebrate=0;
         }
 
@@ -1088,16 +1112,21 @@ void Ground_Run(int *outMode,int *outEnding)
         float c1y=Terrain_Height(-16,168), c2y=Terrain_Height(16,168);
         DrawWavingFlag(cam,(Vector3){-16,c1y,168},0.5f,0,timeAlive,8.0f);
         DrawWavingFlag(cam,(Vector3){ 16,c2y,168},-0.5f,1,timeAlive,8.0f);
-        // objective: bare pole until captured, our red flag planted on victory
+        // objective: enemy colours over the crest; on victory they fold 90
+        // degrees and the Five-star Red Flag is hoisted (DrawObjectiveFlags).
         float gy=Terrain_Height(OBJV.x,OBJV.z);
-        DrawPart(P_CYL,C_BROWN,MatrixIdentity(),MPart((Vector3){OBJV.x,gy+4,OBJV.z},(Vector3){1,0,0},0,(Vector3){0.12f,8,0.12f}));
-        if(planted) DrawWavingFlag(cam,(Vector3){OBJV.x,gy,OBJV.z},0.2f,0,timeAlive,8.0f);
-        else       DrawPart(P_BOX,C_NAVY,MatrixIdentity(),MPart((Vector3){OBJV.x+1.4f,gy+6.6f,OBJV.z},(Vector3){1,0,0},0,(Vector3){2.8f,1.6f,0.08f}));
+        DrawObjectiveFlags(cam,(Vector3){OBJV.x,gy,OBJV.z},planted,objFall,timeAlive);
         // sandbag cover
         for(int i=0;i<6;i++){ float x=-60+i*24; float z=-260-((i%2)*20); DrawPart(P_BOX,C_SAND,MatrixIdentity(),MPart((Vector3){x,Terrain_Height(x,z)+0.5f,z},(Vector3){0,1,0},i*0.4f,(Vector3){4,1,1.2f})); }
         // wrecked truck decoys
         DrawVehicle((Vector3){-90, Terrain_Height(-90,-60), -60}, 0.6f, 0, 1.0f);
         DrawVehicle((Vector3){110, Terrain_Height(110,-120), -120}, 2.2f, 2, 1.0f);
+        DrawVehicle((Vector3){-150, Terrain_Height(-150,-310), -310}, 0.2f, 2, 1.0f);
+        DrawVehicle((Vector3){170, Terrain_Height(170,-180), -180}, 1.0f, 0, 1.0f);
+        // shell craters / scorch marks — the ground must read as fought over
+        for(int i=0;i<NBURN;i++){ float bx=BURN_PT[i][0],bz=BURN_PT[i][1];
+            DrawPart(P_CYL,C_DARK,MatrixIdentity(),
+                MPart((Vector3){bx,Terrain_Height(bx,bz)+0.05f,bz},(Vector3){0,1,0},i*0.7f,(Vector3){4.0f+(i%3),0.02f,4.0f+(i%3)})); }
         // restrained dark stains where men fell
         for(int i=0;i<MAXBLD;i++)if(blds[i].on)
             DrawPart(P_CYL,C_BLOOD,MatrixIdentity(),MPart(blds[i].p,(Vector3){0,1,0},blds[i].rot,(Vector3){blds[i].r,0.02f,blds[i].r}));
@@ -1106,8 +1135,8 @@ void Ground_Run(int *outMode,int *outEnding)
         for(int i=0;i<NP;i++)if(!pals[i].alive&&pals[i].state==9) DrawSoldierDown(pals[i].pos,pals[i].ang,0,1.0f);
         // wounded comrade you can talk to
         if(woundOn) DrawSoldierDown(wound.pos,wound.ang,0,1.0f);
-        for(int i=0;i<NF;i++)if(foes[i].alive) DrawSoldier(foes[i].pos,-foes[i].ang,1,1.0f,1);
-        for(int i=0;i<NP;i++)if(pals[i].alive) DrawSoldier(pals[i].pos,-pals[i].ang,0,1.0f,1);
+        for(int i=0;i<NF;i++)if(foes[i].alive) DrawSoldier(foes[i].pos,-foes[i].ang,1,1.0f,1,timeAlive*9.0f+i*1.3f);
+        for(int i=0;i<NP;i++)if(pals[i].alive) DrawSoldier(pals[i].pos,-pals[i].ang,0,1.0f,1,timeAlive*9.0f+i*1.3f);
         drawNetBodies();   // other real co-op players
         // grenade in flight + charging arc preview
         if(gre.on) DrawPart(P_SPHERE,C_DARK,MatrixIdentity(),MPart(gre.p,(Vector3){1,0,0},0,(Vector3){0.2f,0.24f,0.2f}));
@@ -1124,12 +1153,17 @@ void Ground_Run(int *outMode,int *outEnding)
             }
         }
         FX_Draw3D(cam);
+        {
+            float hsp2=pvel.x*pvel.x+pvel.z*pvel.z; int moving=(hsp2>1.0f && jumps==0);
+            DrawFirstPersonLegs(cam,moving,timeAlive*9.0f);
+        }
         if(ads<0.5f && !gunOccluded) DrawRifleView(cam,weapon,gunKick);  // 瞄准/贴墙时隐去枪
         EndMode3D();
         if(paused) Touch_DrawPauseMenu();
         else { drawHud(); drawScope(); Touch_DrawHUD(); drawTalk(); }
         EndDrawing();
         if(gSelfTest && frame==260) TakeScreenshot(TextFormat("%s/shot_ground.png",gShotDir));
+        if(gFlagTest && frame==150) TakeScreenshot(TextFormat("%s/shot_flag.png",gShotDir));
 
         // win / lose (frozen while paused / in dialogue)
         if(!paused&&!talkOpen)

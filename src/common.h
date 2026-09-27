@@ -76,12 +76,15 @@ void   DrawPart(int shape, int color, Matrix parent, Matrix local);
 void   DrawParts(int shape, int color, Matrix parent, const Matrix* locals, int n);
 void   DrawJ20(Vector3 pos, Quaternion q, float scale, int insignia);
 void   DrawSabre(Vector3 pos, Quaternion q, float scale);
-void   DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp);
+void   DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp, float phase);
 void   DrawSoldierDown(Vector3 feet, float yaw, int uniform, float scale);
 void   DrawVehicle(Vector3 pos, float yaw, int kind, float scale);
 void   DrawMissile(Vector3 pos, Quaternion q);
 void   DrawBomb(Vector3 pos, Quaternion q);
 void   DrawRifleView(Camera3D cam, int type, float kick);
+void   DrawFirstPersonLegs(Camera3D cam, int moving, float phase);
+void   Weapon_SwingTick(void);           // start a blade/fist swing animation
+void   Weapon_AnimUpdate(float dt);
 Vector3 RifleMuzzle(Camera3D cam, int type);
 
 // particle / tracer fx
@@ -93,6 +96,7 @@ void FX_Fireball(Vector3 p, float scale);
 void FX_Smoke(Vector3 p, float scale);
 void FX_Muzzle(Vector3 p);
 void FX_Blood(Vector3 p);
+void FX_FireLong(Vector3 p, float sc);   // persistent, long-life flame (burning wrecks)
 void FX_FlakBurst(Vector3 p);
 void FX_Tracer(Vector3 a, Vector3 b, Color c, float life);
 void FX_EngineSmoke(Vector3 p);
@@ -117,6 +121,9 @@ void DrawCornerFlags(void);
 // 3D waving flag on a pole. kind 0 = Five-star Red Flag, 1 = PLA "Aug 1st" flag.
 // base is the pole foot; yaw rotates the cloth direction; t is elapsed seconds.
 void DrawWavingFlag(Camera3D cam, Vector3 base, float yaw, int kind, float t, float poleH);
+// objective crest: enemy colours fly until captured, then fold 90 deg while the
+// Five-star Red Flag is hoisted and waves. fallT counts up once capture starts.
+void DrawObjectiveFlags(Camera3D cam, Vector3 base, int captured, float fallT, float t);
 
 // ---------- modes ----------
 typedef struct {
@@ -162,13 +169,19 @@ int   Touch_GrePressed(void);           // throw grenade (ground)
 int   Touch_PauseTap(float*x,float*y);  // fresh tap while pause overlay is up
 int   Touch_PauseMenuSelect(void);     // pause overlay: 1 resume, 2 quit
 void  Touch_DrawPauseMenu(void);
+void  Touch_Suppress(float seconds);    // swallow touches after a UI transition
 int   Touch_IsTouch(void);
 
 // battle scenario: 0 = generic ridge assault, 1 = Chosin Reservoir / Ice Company
 extern int gScenario;
+int  Map_IsNight(void);
+int  Map_IsSnow(void);
+int  Map_IsScorch(void);
+int  Map_IsDusk(void);
 
 // self test
 extern int gSelfTest;
+extern int gFlagTest;   // dev: jump straight to the victory flag ceremony
 extern int gUncap;
 extern char gShotDir[];
 extern AirResult gAirResult;

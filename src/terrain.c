@@ -9,22 +9,43 @@ Model gTerrain = (Model){0};
 int   gTerrainReady = 0;
 static Model gSea = (Model){0};
 
+// one row per campaign (gScenario index): noise offset makes genuinely
+// different ground; ridgeMul/northMul shape the theatre's terrain.
+typedef struct { float ox,oz,ridgeMul,northMul,eastMul,flatR; } MapCfg;
+static const MapCfg MAPS[6]={
+    {  0.0f,   0.0f, 235.0f,1.0f,1.0f,170.0f}, // 0 山地攻坚 昼
+    { 41.7f, -23.3f, 255.0f,1.15f,0.7f,150.0f}, // 1 长津湖 雪夜
+    {-67.4f,  35.9f, 300.0f,1.35f,1.2f, 92.0f}, // 2 上甘岭 陡峭焦土
+    { 18.2f,  66.1f, 240.0f,1.05f,0.9f,140.0f}, // 3 松骨峰 黄昏雪
+    { 73.5f,  12.8f, 200.0f,0.8f,0.6f,170.0f}, // 4 汉江 夜渡泥滩
+    {-29.6f,-58.2f, 225.0f,0.95f,1.05f,150.0f}, // 5 三八线 阵地对峙
+};
+static const MapCfg* mapCfg(void){ int s=gScenario; if(s<0||s>5)s=0; return &MAPS[s]; }
+
+// theme queries used by sky / environment / colours
+int Map_IsNight(void){ return gScenario==1||gScenario==4; }
+int Map_IsSnow(void){ return gScenario==1||gScenario==3; }
+int Map_IsScorch(void){ return gScenario==2||gScenario==5; }
+int Map_IsDusk(void){ return gScenario==3; }
+
 static inline float heightRaw(float x, float z)
 {
-    float nx = x*0.00085f, nz = z*0.00085f;
+    const MapCfg*c=mapCfg();
+    float nx = x*0.00085f+c->ox*0.013f, nz = z*0.00085f+c->oz*0.013f;
     float base = Noise_Fbm2(nx+11.3f, nz-7.1f, 5, 2.03f, 0.55f);   // broad hills
     float ridge = Noise_Ridged2(nx*1.8f-31.7f, nz*1.8f+12.4f, 4);   // mountain crests
     float north = clampf((-z - 180.0f)/980.0f, 0.0f, 1.0f);         // northern highlands
     float east  = clampf((  x - 500.0f)/700.0f, 0.0f, 0.6f);
     float h = base*52.0f;
-    h += powf(ridge>0?ridge:0, 1.25f)*235.0f*north;
-    h += powf(ridge>0?ridge:0, 1.6f)*120.0f*east;
+    h += powf(ridge>0?ridge:0, 1.25f)*c->ridgeMul*north*c->northMul;
+    h += powf(ridge>0?ridge:0, 1.6f)*120.0f*east*c->eastMul;
     h -= 8.0f;
     // flatten a forward airstrip / assembly area near origin
+    float FR=mapCfg()->flatR;
     float r2 = x*x + z*z;
-    if (r2 < 170.0f*170.0f)
+    if (r2 < FR*FR)
     {
-        float t = clampf((sqrtf(r2)-120.0f)/50.0f, 0.0f, 1.0f);
+        float t = clampf((sqrtf(r2)-(FR-50.0f))/50.0f, 0.0f, 1.0f);
         t = t*t*(3.0f-2.0f*t);
         h = h*t + 2.0f*(1.0f-t);
     }
@@ -50,7 +71,7 @@ static Color landColor(float h, float slope, float x, float z)
 {
     Color c;
     float r2 = x*x+z*z;
-    if(gScenario==1)
+    if(Map_IsSnow())
     {
         // Chosin Reservoir, winter night: deep snow almost everywhere,
         // dark wind-swept crags and a frozen pale-blue lake / river flats.
@@ -63,13 +84,20 @@ static Color landColor(float h, float slope, float x, float z)
         c.r=(unsigned char)clampf(c.r*vv,0,255); c.g=(unsigned char)clampf(c.g*vv,0,255); c.b=(unsigned char)clampf(c.b*vv,0,255);
         return c;
     }
-    // airfield: runway strip along X
-    if (r2 < 165.0f*165.0f && fabsf(z) < 13.0f) return (Color){70,72,74,255};
-    if (r2 < 165.0f*165.0f && fabsf(z) < 24.0f) return (Color){110,104,86,255};
+    // airfield runway strip along X (only in the air-support map)
+    if(gScenario==0 && r2 < 165.0f*165.0f && fabsf(z) < 13.0f) return (Color){70,72,74,255};
+    if(gScenario==0 && r2 < 165.0f*165.0f && fabsf(z) < 24.0f) return (Color){110,104,86,255};
     float patch = Noise_Fbm2(x*0.02f+5,z*0.02f+5,2,2.0f,0.5f);
     if (slope > 0.62f)            c = (Color){112,96,80,255};          // cliff rock
     else if (h > 165.0f)          c = (Color){236,238,242,255};       // snow
     else if (h > 120.0f)          c = (Color){124,110,96,255};        // high rock
+    else if(Map_IsScorch())
+    {   // shell-blasted heights: ash, scorched grass, churned mud
+        if(slope>0.45f)      c=(Color){78,70,60,255};
+        else if(patch>0.28f) c=(Color){104,98,86,255};
+        else if(patch>0.02f) c=(Color){74,72,46,255};
+        else                 c=(Color){70,58,46,255};
+    }
     else if (h > 70.0f)           c = (Color){64,86,52,255};          // forest
     else if (h > SEA_Y+6.0f)
     {
@@ -132,7 +160,7 @@ void Terrain_Init(void)
     Mesh sea = GenMeshPlane(WORLD_HALF*3.2f, WORLD_HALF*3.2f, 1, 1);
     gSea = LoadModelFromMesh(sea);
     gSea.materials[0].maps[MATERIAL_MAP_DIFFUSE].color =
-        gScenario==1 ? (Color){18,30,52,170} : (Color){34,74,112,150};
+        Map_IsNight() ? (Color){18,30,52,170} : (Color){34,74,112,150};
 }
 
 extern Shader gLit; // defined in scene.c

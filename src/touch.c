@@ -17,7 +17,6 @@ static int   s_mode=0;
 static float s_axisX=0, s_axisY=0;
 static float s_lookDX=0, s_lookDY=0;
 static Btn   bFire,bAct,bB,bSw,bAds,bPause,bTalk,bGre;
-static int   px[MAXT], py[MAXT], pvalid[MAXT];
 static float sW,sH;
 
 static int inside(float x,float y,Btn*b){ float dx=x-b->bx,dy=y-b->by; return dx*dx+dy*dy<=b->br*b->br; }
@@ -29,6 +28,16 @@ static int s_lastN=0;            // touch count at end of previous frame
 static int s_menuTap=0;          // a brand-new touch began this frame
 static float s_menuX=0,s_menuY=0;
 
+// A finger keeps the ROLE it got where it first landed (stick / a button /
+// look), so sliding off a button or lifting-and-tapping can never suddenly
+// swing the camera, and one tap can't trigger two different controls.
+enum { ROLE_NONE=0, ROLE_STICK, ROLE_LOOK,
+       ROLE_FIRE, ROLE_ACT, ROLE_B, ROLE_SW, ROLE_ADS, ROLE_TALK, ROLE_GRE, ROLE_PAUSE };
+static int   s_role[MAXT];
+static float s_lx[MAXT], s_ly[MAXT];
+static float s_supp=0;           // seconds to swallow every touch (UI handoff)
+void Touch_Suppress(float seconds){ s_supp=seconds; }
+
 // pause-menu buttons (fraction of screen), shared by hit-test and drawing
 static int pmRect(float*rx,float*ry,float*rw,float*rh,int which)
 {
@@ -37,7 +46,6 @@ static int pmRect(float*rx,float*ry,float*rw,float*rh,int which)
     *ry=0.53f;                                 // 返回主菜单
     return 1;
 }
-static int s_prevTouchN=0;
 
 void Touch_Update(int mode)
 {
@@ -69,6 +77,13 @@ void Touch_Update(int mode)
     int nNow=GetTouchPointCount();
     s_menuTap=(nNow>0 && s_lastN==0);
     if(s_menuTap){ Vector2 t0=GetTouchPosition(0); s_menuX=t0.x; s_menuY=t0.y; }
+    if(s_supp>0)
+    {
+        s_supp-=GetFrameTime();
+        s_menuTap=0; nNow=0;
+        for(int k=0;k<MAXT;k++) s_role[k]=ROLE_NONE;
+        s_lastN=0;
+    }
 
     // 3) reset this frame's classification (fire re-classified each frame too)
     bFire.held=0; bAct.held=0; bB.held=0; bSw.held=0; bAds.held=0; bPause.held=0; bTalk.held=0; bGre.held=0;
@@ -81,34 +96,56 @@ void Touch_Update(int mode)
     {
         Vector2 tp=GetTouchPosition(k);
         float x=tp.x, y=tp.y;
-        // pause tab has top priority (it sits in the left half, above the stick)
-        if(insideRect(x,y,12,12,84,56)) bPause.held=1;
-        else if(x < 0.42f*sW)
+        if(s_role[k]==ROLE_NONE)
         {
-            float baseX=0.16f*sW, baseY=0.70f*sH, R=0.17f*sH;
-            float dx=(x-baseX)/R, dy=(y-baseY)/R;
-            float l=sqrtf(dx*dx+dy*dy); if(l>1){dx/=l;dy/=l;}
-            stickDx=dx; stickDy=-dy; stickOn=1;   // screen up -> +Y
+            // assign this finger's role exactly once, at its landing point
+            s_lx[k]=x; s_ly[k]=y;
+            if(insideRect(x,y,12,12,84,56)) s_role[k]=ROLE_PAUSE;
+            else if(x < 0.42f*sW)           s_role[k]=ROLE_STICK;
+            else if(inside(x,y,&bFire))     s_role[k]=ROLE_FIRE;
+            else if(inside(x,y,&bAct))      s_role[k]=ROLE_ACT;
+            else if(inside(x,y,&bB))        s_role[k]=ROLE_B;
+            else if(inside(x,y,&bAds))      s_role[k]=ROLE_ADS;
+            else if(inside(x,y,&bSw))       s_role[k]=ROLE_SW;
+            else if(mode==1 && inside(x,y,&bTalk)) s_role[k]=ROLE_TALK;
+            else if(mode==1 && inside(x,y,&bGre))  s_role[k]=ROLE_GRE;
+            else                            s_role[k]=ROLE_LOOK;
         }
-        else if(inside(x,y,&bFire)) bFire.held=1;
-        else if(inside(x,y,&bAct))  bAct.held=1;
-        else if(inside(x,y,&bB))    bB.held=1;
-        else if(inside(x,y,&bAds))  bAds.held=1;
-        else if(inside(x,y,&bSw))   bSw.held=1;
-        else if(mode==1 && inside(x,y,&bTalk)) bTalk.held=1;
-        else if(mode==1 && inside(x,y,&bGre))  bGre.held=1;
-        else if(mode==1 && pvalid[k])
+        switch(s_role[k])
         {
-            // dead-zone: a tap or tiny jitter must not swing the view
-            float ddx=(float)(x-px[k]), ddy=(float)(y-py[k]);
-            if(fabsf(ddx)>3.0f) s_lookDX += ddx;
-            if(fabsf(ddy)>3.0f) s_lookDY += ddy;
+            case ROLE_PAUSE: bPause.held=1; break;
+            case ROLE_STICK:
+            {
+                float baseX=0.16f*sW, baseY=0.70f*sH, R=0.17f*sH;
+                float dx=(x-baseX)/R, dy=(y-baseY)/R;
+                float l=sqrtf(dx*dx+dy*dy); if(l>1){dx/=l;dy/=l;}
+                stickDx=dx; stickDy=-dy; stickOn=1;   // screen up -> +Y
+                break;
+            }
+            case ROLE_FIRE: bFire.held=1; break;
+            case ROLE_ACT:  bAct.held=1;  break;
+            case ROLE_B:    bB.held=1;    break;
+            case ROLE_ADS:  bAds.held=1;  break;
+            case ROLE_SW:   bSw.held=1;   break;
+            case ROLE_TALK: if(mode==1) bTalk.held=1; break;
+            case ROLE_GRE:  if(mode==1) bGre.held=1;  break;
+            case ROLE_LOOK:
+            {
+                // per-finger delta from its own last spot; dead-zone + a hard
+                // per-frame cap, so a stray flick can't whip the view 180°.
+                float ddx=(float)(x-s_lx[k]), ddy=(float)(y-s_ly[k]);
+                const float DEAD=4.0f, CAP=42.0f;
+                if(ddx> CAP)ddx= CAP; if(ddx<-CAP)ddx=-CAP;
+                if(ddy> CAP)ddy= CAP; if(ddy<-CAP)ddy=-CAP;
+                if(fabsf(ddx)>DEAD) s_lookDX += ddx;
+                if(fabsf(ddy)>DEAD) s_lookDY += ddy;
+                s_lx[k]=x; s_ly[k]=y;
+                break;
+            }
         }
-        px[k]=(int)x; py[k]=(int)y; pvalid[k]=1;
     }
-    s_prevTouchN=n;
+    for(int k=n;k<MAXT;k++){ s_role[k]=ROLE_NONE; }
     s_lastN=n;
-    for(int k=n;k<MAXT;k++) pvalid[k]=0;
     s_axisX=stickOn?stickDx:0; s_axisY=stickOn?stickDy:0;
 }
 
@@ -241,6 +278,7 @@ int Touch_GrePressed(void){ return 0; }
 int Touch_PauseTap(float*x,float*y){ (void)x;(void)y; return 0; }
 int Touch_PauseMenuSelect(void){ return 0; }
 void Touch_DrawPauseMenu(void){}
+void Touch_Suppress(float seconds){ (void)seconds; }
 int Touch_IsTouch(void){ return 0; }
 
 // desktop: drive pause-menu clicks with a real mouse press, in 0..1 fraction form
