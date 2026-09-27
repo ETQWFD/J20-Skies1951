@@ -24,6 +24,8 @@ static Vector3 aimDir(void)
     return (Vector3){cosf(ap)*sinf(ay),sinf(ap),-cosf(ap)*cosf(ay)};
 }
 static Camera3D cam; static int frame=0;
+static int jumps=0;            // airborne jumps used (0 on ground -> allows double jump)
+static float introT=0;         // mission intro banner timer
 static const Vector3 OBJV={0,0,-380.0f};
 static const char* CRIES[]={"冲啊——！","跟我上！","守住阵地！","为了祖国——！","压过去！"};
 
@@ -262,7 +264,8 @@ static void updatePlayer(float dt)
     Vector3 wish=vadd(keyWish,tWish);
     if(vlen(wish)>spd)wish=vmul(vnorm(wish),spd);
     pvel.x=wish.x; pvel.z=wish.z;
-    if(!gSelfTest&&(IsKeyPressed(KEY_SPACE)||Touch_ActPressed())&&pvel.y<=0.01f) pvel.y=7.2f;
+    if(!gSelfTest&&(IsKeyPressed(KEY_SPACE)||Touch_ActPressed())&&jumps<2)
+    { pvel.y=(jumps==0)?7.2f:6.4f; jumps++; }
     pvel.y-=GRAVITY*dt;
     // recoil recovery (view settles back down; gun returns to rest)
     kickP*=expf(-9.0f*dt); kickY*=expf(-12.0f*dt); gunKick*=expf(-13.0f*dt);
@@ -304,9 +307,17 @@ static void updatePlayer(float dt)
             { float d=sqrtf(d2), push=(0.85f-d)/d; eye.x+=dx*push; eye.z+=dz*push; }
             else if(d2<=1e-6f){ eye.z+=0.85f; }
         }
+        // static wrecked vehicles block the player too (no walking through steel)
+        const Vector3 ob[2]={{-90,-1,-60},{110,-1,-120}};
+        for(int k=0;k<2;k++)
+        {
+            float dx=eye.x-ob[k].x, dz=eye.z-ob[k].z, rr=3.0f;
+            float d2=dx*dx+dz*dz;
+            if(d2<rr*rr && d2>1e-6f){ float d=sqrtf(d2),push=(rr-d)/d; eye.x+=dx*push; eye.z+=dz*push; }
+        }
     }
     float gy=Terrain_Height(eye.x,eye.z)+1.68f;
-    if(eye.y<gy){eye.y=gy;pvel.y=0;}
+    if(eye.y<gy){eye.y=gy; if(pvel.y<=0.0f){pvel.y=0; jumps=0;}}
     if(fabsf(eye.x)>WORLD_HALF-10)eye.x=WORLD_HALF-10;
     if(fabsf(eye.z)>WORLD_HALF-10)eye.z=WORLD_HALF-10;
     if(dmgCd>0)dmgCd-=dt; else hp+=6*dt;
@@ -344,6 +355,39 @@ static void drawScope(void)
         DrawPixel(cx,cy-d,ret); DrawPixel(cx,cy+d,ret); }
 }
 
+static float wrap180(float a){ while(a>180.0f)a-=360.0f; while(a<-180.0f)a+=360.0f; return a; }
+
+// top-center heading ribbon: 北/东/南/西 + objective bearing chevron, so the
+// player always knows which way the fight is.
+static void drawCompass(void)
+{
+    int cx=GetScreenWidth()/2, y=16, half=168; float pd=2.8f;
+    DrawRectangle(cx-half,y,half*2,30,(Color){0,0,0,128});
+    DrawRectangleLines(cx-half,y,half*2,30,(Color){255,255,255,90});
+    float hd=yaw*RAD2DEG;
+    for(int a=-180;a<=180;a+=15)
+    {
+        int x=(int)(cx+wrap180((float)a-hd)*pd);
+        if(x<cx-half||x>cx+half)continue;
+        if(a%90==0) DrawLine(x,y+7,x,y+17,WHITE); else DrawLine(x,y+10,x,y+15,(Color){220,220,220,180});
+    }
+    static const struct{int a;const char*t;} L[4]={{0,"北"},{90,"东"},{180,"南"},{-90,"西"}};
+    for(int i=0;i<4;i++)
+    {
+        int x=(int)(cx+wrap180((float)L[i].a-hd)*pd);
+        if(x>=cx-half+12&&x<=cx+half-12) CN(L[i].t,x-8,y+17,15,(Color){255,236,190,255});
+    }
+    // objective bearing
+    float dx=OBJV.x-eye.x, dz=OBJV.z-eye.z;
+    float bear=atan2f(dx,-dz)*RAD2DEG, dist=sqrtf(dx*dx+dz*dz);
+    int ox=(int)(cx+wrap180(bear-hd)*pd);
+    if(ox<cx-half+10)ox=cx-half+10; if(ox>cx+half-10)ox=cx+half-10;
+    DrawTriangle((Vector2){ox-6,y+30},(Vector2){ox+6,y+30},(Vector2){ox,y+22},(Color){255,90,70,255});
+    CNC(TextFormat("目标 %d m",(int)dist),cx,y+50,14,(Color){255,170,150,255});
+    // heading tick (where you face now)
+    DrawLine(cx,y+4,cx,y+12,(Color){255,240,180,255});
+}
+
 static void drawHud(void)
 {
     int cx=GetScreenWidth()/2, cy=GetScreenHeight()/2;
@@ -361,12 +405,16 @@ static void drawHud(void)
     DrawRectangle(70,16,(int)(160*hp/100.0f),14,hp>35?(Color){200,60,50,255}:(Color){235,90,70,255});
     DrawRectangleLines(70,16,160,14,WHITE);
     CN(TextFormat("残敌 %d   战友 %d",foesAlive(),palsAlive()),16,40,17,WHITE);
-    CN("WASD移动  Shift冲刺  空格跃进  鼠标瞄准射击  1步枪 2冲锋枪 R装填  ESC撤退",16,GetScreenHeight()-12,14,(Color){215,220,230,220});
+    CN("WASD移动  Shift冲刺  空格跳跃(可二段跳)  鼠标瞄准射击  1步枪 2冲锋枪 R装填  ESC撤退",16,GetScreenHeight()-12,14,(Color){215,220,230,220});
+    drawCompass();
+    if(introT>0)
+        CNC(gScenario==1?"长津湖 · 冰雕连 —— 卧雪潜伏，号响即冲":"夺取前方高地 · 冲啊！",
+            GetScreenWidth()/2,(int)(GetScreenHeight()*0.30f),26,(Color){255,228,170,235});
 
     // objective marker
     Vector3 op=(Vector3){OBJV.x, Terrain_Height(OBJV.x,OBJV.z)+4, OBJV.z};
     Vector2 os=GetWorldToScreen(op,cam);
-    const char* goal="目标：夺取前方高地";
+    const char* goal=gScenario==1?"目标：夜袭隘口·冲锋":"目标：夺取前方高地";
     bool onscreen=os.x>20&&os.x<GetScreenWidth()-20&&os.y>20&&os.y<GetScreenHeight()-20;
     if(onscreen)
     {
@@ -402,6 +450,7 @@ void Ground_Run(int *outMode,int *outEnding)
     yaw=0; pitch=-0.05f; hp=100; weapon=0; mag[0]=5;mag[1]=30; reload=0; fireCd=0;
     foesKilled=0; hitMark=0; dmgCd=0; holdT=0; timeAlive=0; frame=0; pvel=v3(0,0,0); ads=0; paused=0; kickP=kickY=gunKick=0;
     cam=(Camera3D){0}; cam.fovy=72; cam.projection=CAMERA_PERSPECTIVE; cam.up=(Vector3){0,1,0};
+    jumps=0; introT=gScenario==1?7.0f:3.5f;
     DisableCursor();
     Sfx_Bugle();
 
@@ -419,7 +468,7 @@ void Ground_Run(int *outMode,int *outEnding)
             if(pm==1||IsKeyPressed(KEY_ENTER)||IsKeyPressed(KEY_KP_ENTER)) paused=0;
         }
         if(!paused){ updatePlayer(dt); updateFoes(dt); updatePals(dt);
-            FX_Update(dt); Env_Update(dt); }
+            FX_Update(dt); Env_Update(dt); if(introT>0)introT-=dt; }
 
         Vector3 dir=aimDir();
         cam.position=eye; cam.target=vadd(eye,dir);
@@ -475,8 +524,8 @@ void Ground_Run(int *outMode,int *outEnding)
         bool nearObj=(dx*dx+dz*dz)<70*70;
         int fa=foesAlive();
         if(nearObj && fa<=3) holdT+=dt; else holdT=0;
-        if(hp<=0){ endId=(foesKilled>=5||(eye.z< -250))?203:204; break; }
-        if((fa==0 && nearObj) || holdT>=5){ endId=(fa==0)?201:202; break; }
+        if(hp<=0){ endId=(foesKilled>=5||(eye.z< -250))?(gScenario==1?206:203):(gScenario==1?206:204); break; }
+        if((fa==0 && nearObj) || holdT>=5){ endId=(fa==0)?(gScenario==1?205:201):(gScenario==1?205:202); break; }
         if(gSelfTest && frame>=420){ endId=201; break; }
         }
     }

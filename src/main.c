@@ -3,6 +3,8 @@
 #include "noise.h"
 #include "rlgl.h"
 
+extern Shader gLit; // scene.c lit shader, reapplied after terrain (re)build
+
 // Portable strsep replacement (strsep is BSD/glibc and absent from the Windows
 // CRT); same semantics so the '|'-delimited text wrapping works on every platform.
 static char* NextSeg(char **stringp, const char *delim)
@@ -47,6 +49,8 @@ void CNC(const char* t,int cx,int y,int sz,Color c)
 
 enum { ST_MENU, ST_HELP, ST_AIR, ST_GROUND, ST_END };
 
+int gScenario=0; // 0=general ridge assault, 1=Chosin Reservoir / Ice Company night battle
+
 // ----------------------------------------------------------------- ending data
 static const char* AIR_TITLE[16]={0};
 static const char* GND_TITLE[16]={0};
@@ -69,6 +73,8 @@ static const char* gndPara(int id)
     case 201: return "高地上最后一个火力点被拔掉，红旗插上了阵地。|你和剩下的战友站在寒风里，听见后方传来新一轮的冲锋号。";
     case 202: return "你突入高地、死死顶住了反扑，为后续部队撕开了口子。|阵地在我们手里——这句话，是用很多人的命换来的。";
     case 203: return "你在冲锋路上倒下时，身边已经躺着数倍于你的敌人。|身后的战友跨过你继续向前，号声没有停。";
+    case 205: return "冲锋号在黎明前的雪原上吹响，你们踏过齐膝深的雪夺下了隘口阵地。|长津湖畔的寒夜里，有人永远保持着冲锋的姿态，化成了冰雪中的雕像。";
+    case 206: return "你在零下三十多度的雪地里战斗到最后，手指已扣不动枪栓。|号声远去时，阵地上仍保持着伏击的队形——冰与火都没能让这支连队后退一步。";
     default:  return "冲锋被压在半山腰。你没能看到天亮时的高地。|可总有人要先冲上去——后来上去的人里，有人记得你。";
     }
 }
@@ -120,6 +126,8 @@ void DrawEnding(int mode,int endingId,int fromAir,void* res)
         case 201:title="攻克高地 · 胜利";break;
         case 202:title="阵地在手 · 胜利";break;
         case 203:title="英勇牺牲 · 浩气长存";break;
+        case 205:title="长津湖 · 冰血隘口";break;
+        case 206:title="冰雕连 · 军魂永驻";break;
         default:title="倒在冲锋路上";break;
         }
     }
@@ -172,7 +180,7 @@ static void drawHelp(void)
     "消灭4波F-86并摧毁北方河谷的15个地面目标可得全胜；雷达红点=敌机，黄点=地面目标。",
     "",
     "【陆战 · 志愿军步兵】",
-    "WASD 移动   Shift 冲刺   空格 跃进/翻越   鼠标 瞄准   左键 射击",
+    "WASD 移动   Shift 冲刺   空格 跳跃(空中再按一次=二段跳)   鼠标 瞄准   左键 射击",
     "数字1 莫辛-纳甘步枪(高伤害拉栓)   数字2 AKM突击步枪(连发)   R 装填",
     "跟随战友冲锋，夺取前方高地上的红旗阵地，坚守即胜；注意土工作业与敌军火力。",
     "",
@@ -202,12 +210,15 @@ static void drawMenuBg(void)
     EndMode3D();
 }
 
-typedef struct { Rectangle r; const char* name; int key, to; } Btn;
+typedef struct { Rectangle r; const char* name; int key, to, scn; } Btn;
 static int menuLoop(int *go)
 {
-    Btn b[3]={ {{0,0,420,64},"① 空战模式 · 驾驶歼-20",KEY_ONE,ST_AIR},
-               {{0,0,420,64},"② 陆战模式 · 志愿军步兵",KEY_TWO,ST_GROUND},
-               {{0,0,420,64},"③ 操作说明 / 历史",KEY_THREE,ST_HELP} };
+    static int menuInit=0;
+    if(!menuInit){ menuInit=1; if(!gSelfTest && gScenario!=0){gScenario=0; Terrain_Init(); Terrain_ApplyShader(gLit);} }
+    Btn b[4]={ {{0,0,420,64},"① 空战模式 · 驾驶歼-20",KEY_ONE,ST_AIR,0},
+               {{0,0,420,64},"② 陆战模式 · 志愿军步兵",KEY_TWO,ST_GROUND,0},
+               {{0,0,420,64},"③ 长津湖 · 冰雕连(夜战)",KEY_THREE,ST_GROUND,1},
+               {{0,0,420,64},"④ 操作说明 / 历史",KEY_FOUR,ST_HELP,0} };
     int frame=0, sel=-1;
     while(!WindowShouldClose())
     {
@@ -217,22 +228,22 @@ static int menuLoop(int *go)
         ClearBackground((Color){150,180,210,255});
         drawMenuBg();
         DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){6,10,18,120});
-        CNC("长 空 · 1951",GetScreenWidth()/2,120,64,(Color){255,232,150,255});
-        CNC("J-20 SKIES OVER KOREA · 抗美援朝 假想作战",GetScreenWidth()/2,190,22,(Color){225,230,240,235});
-        for(int i=0;i<3;i++)
+        CNC("长 空 · 1951",GetScreenWidth()/2,104,58,(Color){255,232,150,255});
+        CNC("J-20 SKIES OVER KOREA · 抗美援朝 假想作战",GetScreenWidth()/2,170,21,(Color){225,230,240,235});
+        for(int i=0;i<4;i++)
         {
-            b[i].r.x=GetScreenWidth()/2-210; b[i].r.y=280+i*82;
+            b[i].r.x=GetScreenWidth()/2-210; b[i].r.y=252+i*72;
             bool hov=CheckCollisionPointRec(m,b[i].r);
             DrawRectangleRec(b[i].r,hov?(Color){180,60,45,220}:(Color){20,28,40,200});
             DrawRectangleLinesEx(b[i].r,2,(Color){255,210,140,255});
-            CNC(b[i].name,GetScreenWidth()/2,(int)b[i].r.y+18,23,(Color){240,240,245,255});
-            if(hov && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ sel=b[i].to; }
-            if(IsKeyPressed(b[i].key)) sel=b[i].to;
+            CNC(b[i].name,GetScreenWidth()/2,(int)b[i].r.y+17,22,(Color){240,240,245,255});
+            if(hov && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ sel=b[i].to; gScenario=b[i].scn; }
+            if(IsKeyPressed(b[i].key)){ sel=b[i].to; gScenario=b[i].scn; }
         }
-        CNC("铭记历史 · 珍爱和平 · 吾辈自强",GetScreenWidth()/2,GetScreenHeight()-90,18,(Color){255,225,180,220});
-        CNC("鼠标点击或按 1/2/3 选择 · ESC 退出",GetScreenWidth()/2,GetScreenHeight()-54,15,(Color){210,215,225,210});
+        CNC("铭记历史 · 珍爱和平 · 吾辈自强",GetScreenWidth()/2,GetScreenHeight()-86,18,(Color){255,225,180,220});
+        CNC("鼠标点击或按 1/2/3/4 选择 · ESC 退出",GetScreenWidth()/2,GetScreenHeight()-52,15,(Color){210,215,225,210});
         EndDrawing();
-        if(sel>=0){*go=sel;return sel;}
+        if(sel>=0){ if(sel==ST_AIR||sel==ST_GROUND){ Terrain_Init(); Terrain_ApplyShader(gLit); } *go=sel;return sel; }
         if(gSelfTest){ TakeScreenshot(TextFormat("%s/shot_menu.png",gShotDir)); *go=ST_AIR; return ST_AIR; }
     }
     *go=-1; return -1;
@@ -243,6 +254,7 @@ int main(int argc,char**argv)
     for(int i=1;i<argc;i++)
     {
         if(strcmp(argv[i],"--selftest")==0) gSelfTest=1;
+        else if(strcmp(argv[i],"--night")==0) gScenario=1; // dev: preview Chosin night theme
         else if(strcmp(argv[i],"--shotdir")==0 && i+1<argc){ strncpy(gShotDir,argv[++i],sizeof(gShotDir)-1); }
         else if(strcmp(argv[i],"--vsync")==0) gUncap=0;
     }

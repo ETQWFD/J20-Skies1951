@@ -166,6 +166,7 @@ static void updatePlayer(float dt)
     if(yaw  !=0) dq=QuaternionMultiply(QuaternionFromAxisAngle(u, yaw*1.05f*dt),dq);
     P.q=QuaternionMultiply(dq,P.q);
     f=FWDQ(P.q);
+    Vector3 _prev=P.pos;
     P.pos=vadd(P.pos,vmul(f,P.speed*dt));
     // soft world bounds
     if(fabsf(P.pos.x)>WORLD_HALF-120||fabsf(P.pos.z)>WORLD_HALF-120) P.q=SteerForward(P.q,vnorm(vsub(v3(0,400,0),P.pos)),1.2f,dt,0);
@@ -176,8 +177,19 @@ static void updatePlayer(float dt)
         if(IsKeyPressed(KEY_F)||Touch_ActPressed())fireMissile();
         if(IsKeyPressed(KEY_B)||Touch_BPressed())dropBomb();
     }
-    float ground=Terrain_Height(P.pos.x,P.pos.z);
-    if(P.pos.y<ground+2.0f && !gSelfTest){ FX_Explosion(P.pos,2.2f); Sfx_Boom(1); P.hp=-1; }
+    // swept terrain collision: sample the whole movement segment so a fast
+    // jet can't tunnel through a mountain between frames.
+    if(!gSelfTest)
+    {
+        int steps=8; bool crash=false;
+        for(int s2=1;s2<=steps&&!crash;s2++)
+        {
+            float t=(float)s2/steps;
+            Vector3 pt=(Vector3){_prev.x+(P.pos.x-_prev.x)*t, _prev.y+(P.pos.y-_prev.y)*t, _prev.z+(P.pos.z-_prev.z)*t};
+            if(pt.y<Terrain_Height(pt.x,pt.z)+5.0f){ crash=true; P.pos=pt; }
+        }
+        if(crash){ FX_Explosion(P.pos,2.2f); Sfx_Boom(1); P.hp=-1; }
+    }
 }
 
 static bool canRTB(void)

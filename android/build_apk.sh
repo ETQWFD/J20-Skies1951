@@ -68,9 +68,12 @@ done
 cat > "$STAGE/AndroidManifest.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="$PKG" android:versionCode="2" android:versionName="1.1">
+    package="$PKG" android:versionCode="3" android:versionName="1.3">
     <uses-sdk android:minSdkVersion="$API" android:targetSdkVersion="$TARGETSDK" />
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <application android:allowBackup="false" android:label="@string/app_name"
         android:icon="@drawable/icon" android:hasCode="true"
         android:extractNativeLibs="true">

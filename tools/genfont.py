@@ -7,7 +7,7 @@ import glob, os, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 cps = set(range(0x20, 0x7F))
 # a few symbols we rely on even if scanner misses them
-for ch in "·—…、：；？！，。“”‘’《》①②③←→↑↓√×／":
+for ch in "·—…、：；？！，。“”‘’《》①②③④⑤⑥⑦⑧⑨⑩←→↑↓√×／":
     cps.add(ord(ch))
 
 for f in glob.glob(os.path.join(ROOT, "src", "*.c")) + glob.glob(os.path.join(ROOT, "src", "*.h")):

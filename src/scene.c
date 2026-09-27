@@ -238,10 +238,21 @@ void Scene_Unload(void)
 void Scene_SetCamera(Camera3D cam)
 {
     if (gLit.id==0) return;
-    Vector3 sunCol={1.15f,1.02f,0.86f};
-    Vector3 amb={0.24f,0.255f,0.29f};
-    Vector3 fog={0.70f,0.752f,0.82f};
-    float fn=700.0f, ff=3600.0f;
+    Vector3 sunCol, amb, fog; float fn, ff;
+    if(gScenario==1)
+    {   // cold moonlit winter night at Chosin
+        sunCol=(Vector3){0.62f,0.70f,0.92f};
+        amb   =(Vector3){0.135f,0.155f,0.215f};
+        fog   =(Vector3){0.20f,0.255f,0.36f};
+        fn=520.0f; ff=3000.0f;
+    }
+    else
+    {
+        sunCol=(Vector3){1.15f,1.02f,0.86f};
+        amb   =(Vector3){0.24f,0.255f,0.29f};
+        fog   =(Vector3){0.70f,0.752f,0.82f};
+        fn=700.0f; ff=3600.0f;
+    }
     SetShaderValue(gLit,locSun,&SUN_DIR,SHADER_UNIFORM_VEC3);
     SetShaderValue(gLit,locSunCol,&sunCol,SHADER_UNIFORM_VEC3);
     SetShaderValue(gLit,locAmb,&amb,SHADER_UNIFORM_VEC3);
@@ -587,9 +598,17 @@ void Env_Update(float dt)
 void Env_DrawSky2D(void)
 {
     int sw=GetScreenWidth(), sh=GetScreenHeight();
-    Color zen=(Color){58,92,146,255};     // high sky
-    Color mid=(Color){104,144,190,255};
-    Color hor=(Color){203,200,190,255};   // hazy horizon, faint warm
+    Color zen,mid,hor;
+    if(gScenario==1)
+    {   // cold moonlit winter night
+        zen=(Color){8,12,28,255}; mid=(Color){22,30,54,255}; hor=(Color){60,70,96,255};
+    }
+    else
+    {
+        zen=(Color){58,92,146,255};     // high sky
+        mid=(Color){104,144,190,255};
+        hor=(Color){203,200,190,255};   // hazy horizon, faint warm
+    }
     const int BANDS=40;
     int bh=sh/BANDS+1;
     for(int i=0;i<BANDS;i++)
@@ -608,13 +627,19 @@ void Env_Draw(Camera3D cam)
 {
     Vector3 sunPos=vadd(cam.position, vmul(vnorm(SUN_DIR),-6800.0f));
     BeginBlendMode(BLEND_ADDITIVE);
+    if(gScenario==1)
+    {   // pale moon + cold halo
+        DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},sunPos,(Vector3){0,1,0},(Vector2){220,220},(Vector2){110,110},0,(Color){226,234,255,255});
+        DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},sunPos,(Vector3){0,1,0},(Vector2){520,520},(Vector2){260,260},0,(Color){150,170,220,60});
+    }
+    else
     DrawBillboardPro(cam,texFire,(Rectangle){0,0,64,64},sunPos,(Vector3){0,1,0},(Vector2){520,520},(Vector2){260,260},0,(Color){255,250,225,255});
     EndBlendMode();
     BeginBlendMode(BLEND_ALPHA);
     for (int i=0;i<NCLOUD;i++)
     {
         float w=clouds[i].s*2.4f, h=clouds[i].s*0.85f;
-        Color c={255,255,255,92};
+        Color c = gScenario==1 ? (Color){190,200,224,54} : (Color){255,255,255,92};
         DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},clouds[i].p,(Vector3){0,1,0},(Vector2){w,h},(Vector2){w*0.5f,h*0.5f},0,c);
         Vector3 p2=(Vector3){clouds[i].p.x+clouds[i].s*0.7f,clouds[i].p.y+18,clouds[i].p.z+60};
         DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},p2,(Vector3){0,1,0},(Vector2){w*0.7f,h*0.6f},(Vector2){w*0.35f,h*0.3f},0,(Color){255,255,255,70});

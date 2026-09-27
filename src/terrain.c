@@ -50,6 +50,19 @@ static Color landColor(float h, float slope, float x, float z)
 {
     Color c;
     float r2 = x*x+z*z;
+    if(gScenario==1)
+    {
+        // Chosin Reservoir, winter night: deep snow almost everywhere,
+        // dark wind-swept crags and a frozen pale-blue lake / river flats.
+        float patch = Noise_Fbm2(x*0.02f+5,z*0.02f+5,2,2.0f,0.5f);
+        if(slope>0.60f)        c=(Color){64,66,78,255};     // dark frozen crag
+        else if(h>34.0f)       c=(Color){228,234,244,255};  // snow slopes
+        else if(h>SEA_Y+2.0f)  c=(patch>0.1f)?(Color){214,222,234,255}:(Color){196,206,220,255}; // drifted snow flats
+        else                   c=(Color){176,192,208,255};  // frozen lake ice
+        float vv=1.0f+patch*0.06f;
+        c.r=(unsigned char)clampf(c.r*vv,0,255); c.g=(unsigned char)clampf(c.g*vv,0,255); c.b=(unsigned char)clampf(c.b*vv,0,255);
+        return c;
+    }
     // airfield: runway strip along X
     if (r2 < 165.0f*165.0f && fabsf(z) < 13.0f) return (Color){70,72,74,255};
     if (r2 < 165.0f*165.0f && fabsf(z) < 24.0f) return (Color){110,104,86,255};
@@ -71,6 +84,7 @@ static Color landColor(float h, float slope, float x, float z)
 
 void Terrain_Init(void)
 {
+    if(gTerrainReady){ UnloadModel(gTerrain); UnloadModel(gSea); gTerrainReady=0; }
     int vcount = (TER_SEG+1)*(TER_SEG+1);
     Mesh m = {0};
     m.vertexCount = vcount;
@@ -117,7 +131,8 @@ void Terrain_Init(void)
 
     Mesh sea = GenMeshPlane(WORLD_HALF*3.2f, WORLD_HALF*3.2f, 1, 1);
     gSea = LoadModelFromMesh(sea);
-    gSea.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = (Color){34,74,112,150};
+    gSea.materials[0].maps[MATERIAL_MAP_DIFFUSE].color =
+        gScenario==1 ? (Color){18,30,52,170} : (Color){34,74,112,150};
 }
 
 extern Shader gLit; // defined in scene.c
