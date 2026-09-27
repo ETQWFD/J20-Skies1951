@@ -20,7 +20,7 @@ FONT_W  := third_party/font/fontdata_win.o
 LINUX_LIBS := third_party/linux/lib/libraylib.a -lGL -lm -lpthread -ldl -lrt \
               -lX11 -lXrandr -lXi -lXcursor -lXinerama -lasound
 WIN_LIBS   := -lopengl32 -lgdi32 -lwinmm -lole32 -luuid -lcomdlg32 \
-              -lcomctl32 -lshell32 -loleaut32 -static -lm
+              -lcomctl32 -lshell32 -loleaut32 -lws2_32 -static -lm
 
 .PHONY: all linux windows clean
 all: linux windows

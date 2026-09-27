@@ -2,6 +2,7 @@
 #include "common.h"
 #include "noise.h"
 #include "rlgl.h"
+#include "coop.h"
 
 extern Shader gLit; // scene.c lit shader, reapplied after terrain (re)build
 
@@ -249,6 +250,14 @@ static int menuLoop(int *go)
             if(guard<=0 && hov && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){ sel=b[i].to; gScenario=b[i].scn; }
             if(guard<=0 && IsKeyPressed(b[i].key)){ sel=b[i].to; gScenario=b[i].scn; }
         }
+        {   Rectangle lb={GetScreenWidth()/2.0f-210,540,420,54};
+            bool lh=CheckCollisionPointRec(m,lb);
+            DrawRectangleRec(lb,lh?(Color){40,96,150,235}:(Color){18,30,52,210});
+            DrawRectangleLinesEx(lb,2,(Color){150,205,255,255});
+            CNC("⑤ 局域网联机（同一 WiFi · 创建 / 加入）",GetScreenWidth()/2,540+15,20,(Color){235,242,250,255});
+            if(guard<=0 && ((lh&&IsMouseButtonPressed(MOUSE_BUTTON_LEFT))||IsKeyPressed(KEY_FIVE)))
+            { guard=0.4f; Coop_Lobby(); }
+        }
         CNC("铭记历史 · 珍爱和平 · 吾辈自强",GetScreenWidth()/2,GetScreenHeight()-86,18,(Color){255,225,180,220});
         CNC("鼠标点击或按 1/2/3/4 选择 · ESC 退出",GetScreenWidth()/2,GetScreenHeight()-52,15,(Color){210,215,225,210});
         EndDrawing();
@@ -260,9 +269,13 @@ static int menuLoop(int *go)
 
 int main(int argc,char**argv)
 {
+    int devLobby=0, devCoop=0;
     for(int i=1;i<argc;i++)
     {
         if(strcmp(argv[i],"--selftest")==0) gSelfTest=1;
+        else if(strcmp(argv[i],"--lobby")==0){ gSelfTest=1; devLobby=1; } // dev: screenshot LAN lobby
+        else if(strcmp(argv[i],"--coophost")==0){ devCoop=1; }
+        else if(strcmp(argv[i],"--coopclient")==0){ devCoop=2; }
         else if(strcmp(argv[i],"--night")==0) gScenario=1; // dev: preview Chosin night theme
         else if(strcmp(argv[i],"--shotdir")==0 && i+1<argc){ strncpy(gShotDir,argv[++i],sizeof(gShotDir)-1); }
         else if(strcmp(argv[i],"--vsync")==0) gUncap=0;
@@ -287,6 +300,42 @@ int main(int argc,char**argv)
     Env_Load();
     Sfx_Load();
     menuCam=(Camera3D){0}; menuCam.fovy=60; menuCam.projection=CAMERA_PERSPECTIVE; menuCam.up=(Vector3){0,1,0};
+
+    if(devLobby){ Coop_Lobby(); Scene_Unload(); CloseWindow(); return 0; }
+
+    if(devCoop)   // headless-ish end-to-end lobby protocol test (two real processes)
+    {
+        int frames=(int)(8.0f*60);
+        if(devCoop==1)
+        {
+            gCoopRole=1; gCoopId=0; gCoopScenario=0; Net_Host();
+            for(int i=0;i<frames&&!WindowShouldClose();i++)
+            { Coop_HostPoll(1.0f/60.0f);
+              BeginDrawing(); ClearBackground((Color){10,14,22,255});
+              CNC(TextFormat("HOST  peers=%d",Coop_PeerCount()),640,340,28,(Color){120,230,150,255});
+              EndDrawing(); }
+            TakeScreenshot(TextFormat("%s/shot_coophost.png",gShotDir));
+            printf("COOPHOST_DONE peers=%d\n",Coop_PeerCount());
+        }
+        else
+        {
+            gCoopRole=2; Coop_BeginSearch(); int joined=0, status=-1;
+            for(int i=0;i<frames&&!WindowShouldClose();i++)
+            {
+                CoopRoom rooms[4]; int nr=Coop_PollRooms(rooms,4,1.0f/60.0f);
+                if(!joined && nr>0){ Coop_Join(&rooms[0].addr); joined=1; }
+                if(joined) status=Coop_JoinStatus();
+                BeginDrawing(); ClearBackground((Color){10,14,22,255});
+                CNC(TextFormat("CLIENT rooms=%d joined=%d status=%d id=%d",nr,joined,status,gCoopId),
+                    640,340,26,(Color){120,200,255,255});
+                EndDrawing();
+                if(status==1 && i>frames-60) break;
+            }
+            TakeScreenshot(TextFormat("%s/shot_coopclient.png",gShotDir));
+            printf("COOPCLIENT_DONE id=%d status=%d\n",gCoopId,status);
+        }
+        Net_Close(); Scene_Unload(); CloseWindow(); return gCoopId>=1||devCoop==1?0:2;
+    }
 
     int state=ST_MENU, endMode=1, endId=0, pending=-1, endFrames=0;
     while(!WindowShouldClose())
