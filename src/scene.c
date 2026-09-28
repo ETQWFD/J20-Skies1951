@@ -246,32 +246,25 @@ void Scene_SetCamera(Camera3D cam)
     if (gLit.id==0) return;
     Vector3 sunCol, amb, fog; float fn, ff;
     if(Map_IsNight())
-    {   // cold moonlit winter night at Chosin / the Han crossing
-        sunCol=(Vector3){0.66f,0.74f,0.98f};
-        amb   =(Vector3){0.10f,0.12f,0.18f};
-        fog   =(Vector3){0.17f,0.22f,0.33f};
-        fn=420.0f; ff=2600.0f;
-    }
-    else if(Map_IsScorch())
-    {   // shell-blasted, smoke-hazed ridges (Triangle Hill / the 38th parallel)
-        sunCol=(Vector3){1.05f,0.86f,0.62f};
-        amb   =(Vector3){0.19f,0.17f,0.15f};
-        fog   =(Vector3){0.46f,0.42f,0.38f};
-        fn=300.0f; ff=2300.0f;
+    {   // cold moonlit winter night, gunsmoke on the wind
+        sunCol=(Vector3){0.58f,0.64f,0.86f};
+        amb   =(Vector3){0.10f,0.11f,0.15f};
+        fog   =(Vector3){0.20f,0.20f,0.26f};
+        fn=330.0f; ff=2100.0f;
     }
     else if(Map_IsDusk())
-    {   // low burning dusk sun
-        sunCol=(Vector3){1.28f,0.82f,0.52f};
-        amb   =(Vector3){0.22f,0.20f,0.23f};
-        fog   =(Vector3){0.70f,0.52f,0.42f};
-        fn=520.0f; ff=3200.0f;
+    {   // low burning dusk sun through smoke columns
+        sunCol=(Vector3){1.20f,0.74f,0.46f};
+        amb   =(Vector3){0.20f,0.17f,0.17f};
+        fog   =(Vector3){0.60f,0.44f,0.36f};
+        fn=300.0f; ff=2200.0f;
     }
     else
-    {
-        sunCol=(Vector3){1.22f,1.08f,0.90f};
-        amb   =(Vector3){0.22f,0.235f,0.27f};
-        fog   =(Vector3){0.66f,0.72f,0.80f};
-        fn=650.0f; ff=3600.0f;
+    {   // smoke-choked daylight: wan dirty sun, short haze distance
+        sunCol=(Vector3){0.98f,0.86f,0.66f};
+        amb   =(Vector3){0.20f,0.19f,0.17f};
+        fog   =(Vector3){0.52f,0.48f,0.42f};
+        fn=260.0f; ff=2000.0f;
     }
     SetShaderValue(gLit,locSun,&SUN_DIR,SHADER_UNIFORM_VEC3);
     SetShaderValue(gLit,locSunCol,&sunCol,SHADER_UNIFORM_VEC3);
@@ -737,23 +730,19 @@ void Env_DrawSky2D(void)
 {
     int sw=GetScreenWidth(), sh=GetScreenHeight();
     Color zen,mid,hor;
+    // v1.9: every theatre is a war zone — the sky itself is stained by smoke,
+    // ash drifting over the horizon, never a clean peacetime blue.
     if(Map_IsNight())
-    {   // cold moonlit winter night
-        zen=(Color){8,12,28,255}; mid=(Color){22,30,54,255}; hor=(Color){60,70,96,255};
+    {   // cold moonlit night veiled in gunsmoke
+        zen=(Color){10,12,22,255}; mid=(Color){26,28,40,255}; hor=(Color){74,64,62,255};
     }
     else if(Map_IsDusk())
-    {   // smoke-stained winter dusk over the pass
-        zen=(Color){30,34,52,255}; mid=(Color){96,72,72,255}; hor=(Color){196,120,74,255};
-    }
-    else if(Map_IsScorch())
-    {   // daylight choked by battle smoke: slate sky, ash-brown horizon
-        zen=(Color){74,80,88,255}; mid=(Color){120,116,110,255}; hor=(Color){168,150,128,255};
+    {   // burning dusk: ember horizon under banks of black smoke
+        zen=(Color){34,32,40,255}; mid=(Color){104,66,56,255}; hor=(Color){206,108,60,255};
     }
     else
-    {
-        zen=(Color){58,92,146,255};     // high sky
-        mid=(Color){104,144,190,255};
-        hor=(Color){203,200,190,255};   // hazy horizon, faint warm
+    {   // daylight choked by battle smoke: slate zenith, ash-brown horizon
+        zen=(Color){66,70,76,255}; mid=(Color){108,102,96,255}; hor=(Color){176,150,118,255};
     }
     const int BANDS=40;
     int bh=sh/BANDS+1;
@@ -1046,13 +1035,12 @@ void Env_Draw(Camera3D cam)
     for (int i=0;i<NCLOUD;i++)
     {
         float w=clouds[i].s*2.4f, h=clouds[i].s*0.85f;
-        Color c = Map_IsNight() ? (Color){190,200,224,54}
-                : Map_IsScorch()? (Color){96,94,92,120}
-                : Map_IsDusk()  ? (Color){120,104,104,96}
-                : (Color){255,255,255,92};
+        Color c = Map_IsNight() ? (Color){120,124,140,60}
+                : Map_IsDusk()  ? (Color){96,80,72,128}
+                : (Color){86,82,78,135};
         DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},clouds[i].p,(Vector3){0,1,0},(Vector2){w,h},(Vector2){w*0.5f,h*0.5f},0,c);
         Vector3 p2=(Vector3){clouds[i].p.x+clouds[i].s*0.7f,clouds[i].p.y+18,clouds[i].p.z+60};
-        DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},p2,(Vector3){0,1,0},(Vector2){w*0.7f,h*0.6f},(Vector2){w*0.35f,h*0.3f},0,(Color){255,255,255,70});
+        DrawBillboardPro(cam,texGlow,(Rectangle){0,0,64,64},p2,(Vector3){0,1,0},(Vector2){w*0.7f,h*0.6f},(Vector2){w*0.35f,h*0.3f},0,(Color){150,140,128,90});
     }
     EndBlendMode();
 }

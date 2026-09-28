@@ -56,6 +56,7 @@ Matrix MPartQuat(Quaternion q, Vector3 s);
 void   Terrain_Init(void);
 void   Terrain_ApplyShader(Shader s);
 float  Terrain_Height(float x, float z);
+int    Map_Count(void);
 Vector3 Terrain_Normal(float x, float z);
 void   Terrain_Draw(Camera3D cam);
 void   Sea_Draw(Camera3D cam);
@@ -167,6 +168,8 @@ int   Touch_PausePressed(void);        // on-screen pause/back
 int   Touch_ADSHeld(void);             // ground aim-down-sights (hold)
 int   Touch_TalkPressed(void);          // interact with wounded comrade
 int   Touch_GrePressed(void);           // throw grenade (ground)
+int   Touch_GreHeld(void);              // 雷 button held (charge)
+int   Touch_GreReleased(void);          // 雷 button release edge
 int   Touch_PauseTap(float*x,float*y);  // fresh tap while pause overlay is up
 int   Touch_PauseMenuSelect(void);     // pause overlay: 1 resume, 2 quit
 void  Touch_DrawPauseMenu(void);

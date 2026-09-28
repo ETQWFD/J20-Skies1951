@@ -220,10 +220,12 @@ static void drawMenuBg(void)
 
 typedef struct { Rectangle r; const char* name; int key, to, scn; } Btn;
 
-static const char* CAMP_NAME[12]={
-    "温井伏击战 · 山谷","云山攻坚战 · 丘陵","长津湖 · 冰雕连(雪夜)","松骨峰阻击战(雪·黄昏)",
-    "上甘岭坑道战(焦土)","金城反击战 · 河谷","汉江夜渡(夜)","三八线阵地战(硝烟)",
-    "铁原阻击战 · 宽谷","横城反击战(黄昏)","平壤外围战","黄草岭阻击战(山口)" };
+static const char* CAMP_NAME[21]={
+    "温井伏击战","云山攻坚战","长津湖·冰雕连(雪夜)","松骨峰阻击战(黄昏雪)",
+    "上甘岭坑道战(焦土)","金城反击战","汉江夜渡","三八线阵地战(硝烟)",
+    "铁原阻击战","横城反击战(黄昏)","平壤外围战","黄草岭阻击战(雪山口)",
+    "飞虎山阻击战","德川宁远反击战","清川江围歼战","三所里·龙源里穿插战",
+    "突破临津江(雪夜)","釜谷里阻击战","雪马里围歼战","马良山攻防战","黑云吐岭反击战" };
 static const int CAMP_KEY[12]={
     KEY_ONE,KEY_TWO,KEY_THREE,KEY_FOUR,KEY_FIVE,KEY_SIX,
     KEY_SEVEN,KEY_EIGHT,KEY_NINE,KEY_ZERO,KEY_MINUS,KEY_EQUAL };
@@ -252,7 +254,7 @@ static int menuLoop(int *go)
         DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){6,10,18,120});
         int SW=GetScreenWidth();
         CNC("长 空 · 1951",SW/2,40,46,(Color){255,232,150,255});
-        CNC("J-20 SKIES OVER KOREA · 抗美援朝十二大战役 · 重返战场",SW/2,92,18,(Color){225,230,240,235});
+        CNC("J-20 SKIES OVER KOREA · 抗美援朝二十一大战役 · 重返战场",SW/2,92,18,(Color){225,230,240,235});
 
         // ---- top row: air war / LAN coop / history & controls ----
         const char* topN[3]={"① 空战 · 驾驶歼-20","⑨ 局域网协同作战","⑩ 操作说明 / 历史"};
@@ -274,23 +276,38 @@ static int menuLoop(int *go)
             }
         }
 
-        // ---- 12 army campaigns: 3 columns x 4 rows ----
-        float gap=14, cellH=52, gridY=170;
-        float cellW=(SW-48-2*gap)/3.0f; if(cellW>420)cellW=420;
-        float gridW=3*cellW+2*gap, gx0=SW/2.0f-gridW/2.0f;
+        // ---- 21 army campaigns: 7 columns x 3 rows ----
+        int NC=Map_Count();
+        float gap=8, cellH=54, gridY=172;
+        int cols=7, rows=(NC+cols-1)/cols;
+        float cellW=(SW-36-(cols-1)*gap)/(float)cols;
+        float gridW=cols*cellW+(cols-1)*gap, gx0=SW/2.0f-gridW/2.0f;
         Btn cb;
-        for(int i=0;i<12;i++)
+        for(int i=0;i<NC;i++)
         {
-            int col=i%3, row=i/3;
+            int col=i%cols, row=i/cols;
             Rectangle r={gx0+col*(cellW+gap), gridY+row*(cellH+10), cellW, cellH};
             (void)cb;
             bool hov=M_HIT(r);
             DrawRectangleRec(r,hov?(Color){180,60,45,225}:(Color){20,28,40,205});
             DrawRectangleLinesEx(r,2,(Color){255,210,140,255});
-            char lab[64]; snprintf(lab,sizeof lab,"%d  %s",i+1,CAMP_NAME[i]);
-            CNC(lab,(int)(r.x+cellW/2),(int)r.y+15,17,(Color){240,240,245,255});
+            char num[8]; snprintf(num,sizeof num,"%d",i+1);
+            CNC(num,(int)(r.x+cellW/2),(int)r.y+7,15,(Color){255,200,120,255});
+            // wrap a two-part name around the middle dot if it is long
+            const char*nm=CAMP_NAME[i];
+            Vector2 sz=MeasureTextEx(GameFont(),nm,15,0);
+            if(sz.x<=cellW-8) CNC(nm,(int)(r.x+cellW/2),(int)r.y+30,15,(Color){235,238,245,255});
+            else
+            {
+                const char*dot=strchr(nm,0xB7); // UTF-8 of '·'
+                char a[40]={0},b[40]={0};
+                if(dot){ int la=(int)(dot-nm); strncpy(a,nm,la); strncpy(b,dot+3,39); }
+                else { strncpy(a,nm,39); }
+                if(a[0]) CNC(a,(int)(r.x+cellW/2),(int)r.y+26,15,(Color){235,238,245,255});
+                if(b[0]) CNC(b,(int)(r.x+cellW/2),(int)r.y+42,15,(Color){235,238,245,255});
+            }
             if(M_PRESS(r)){ sel=ST_GROUND; gScenario=i; }
-            if(guard<=0 && IsKeyPressed(CAMP_KEY[i])){ sel=ST_GROUND; gScenario=i; }
+            if(guard<=0 && i<12 && IsKeyPressed(CAMP_KEY[i])){ sel=ST_GROUND; gScenario=i; }
         }
         #undef M_HIT
         #undef M_PRESS

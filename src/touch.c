@@ -14,6 +14,7 @@ typedef struct {
 } Btn;
 
 static int   s_mode=0;
+static int   s_greHeld=0, s_greRel=0;   // grenade charge hold/release
 static float s_axisX=0, s_axisY=0;
 static float s_lookDX=0, s_lookDY=0;
 static Btn   bFire,bAct,bB,bSw,bAds,bPause,bTalk,bGre;
@@ -101,6 +102,7 @@ void Touch_Update(int mode)
         }
         for(int k=nNow;k<MAXT;k++) s_role[k]=ROLE_NONE;
         s_lastN=GetTouchPointCount();
+        s_greRel=0; if(s_greHeld&&!bGre.held)s_greRel=1; s_greHeld=0;
         return;
     }
 
@@ -190,6 +192,10 @@ void Touch_Update(int mode)
     for(int k=n;k<MAXT;k++){ s_role[k]=ROLE_NONE; }
     s_lastN=n;
     s_axisX=stickOn?stickDx:0; s_axisY=stickOn?stickDy:0;
+    // grenade charge: release edge of the 雷 button throws the charged grenade
+    s_greRel=0;
+    if(s_greHeld && !bGre.held) s_greRel=1;
+    s_greHeld=bGre.held;
 }
 
 float Touch_AxisX(void){ return s_axisX; }
@@ -204,6 +210,8 @@ int   Touch_SwitchPressed(void){ return latchSw; }
 int   Touch_PausePressed(void){ return latchPause; }
 int   Touch_TalkPressed(void){ return latchTalk; }
 int   Touch_GrePressed(void){ return latchGre; }
+int   Touch_GreHeld(void){ return s_greHeld; }
+int   Touch_GreReleased(void){ return s_greRel; }
 int   Touch_IsTouch(void){ return 1; }
 
 // one fresh tap this frame, in screen pixels (for the pause overlay)
@@ -331,6 +339,8 @@ int Touch_SwitchPressed(void){ return 0; }
 int Touch_PausePressed(void){ return 0; }
 int Touch_TalkPressed(void){ return 0; }
 int Touch_GrePressed(void){ return 0; }
+int Touch_GreHeld(void){ return 0; }
+int Touch_GreReleased(void){ return 0; }
 int Touch_PauseTap(float*x,float*y){ (void)x;(void)y; return 0; }
 int Touch_UITap(float*x,float*y){ (void)x;(void)y; return 0; }
 void Touch_SetPaused(int p){ (void)p; }

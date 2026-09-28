@@ -149,16 +149,35 @@ static void updatePlayer(float dt)
         if(IsKeyDown(KEY_UP))pitch+=1; if(IsKeyDown(KEY_DOWN))pitch-=1;
         if(IsKeyDown(KEY_A))roll+=1; if(IsKeyDown(KEY_D))roll-=1;
         if(IsKeyDown(KEY_Q))yaw+=1; if(IsKeyDown(KEY_E))yaw-=1;
-        // touch (inert on desktop)
+        // touch (inert on desktop): the LEFT STICK is pitch + rudder only, so a
+        // thumb resting on the stick can't bank the jet into the ground; banking
+        // is done by SWIPING the right side of the screen (Touch_LookDX).
         float tax=Touch_AxisX(), tay=Touch_AxisY();
-        pitch += tay; roll -= tax;
 #if defined(PLATFORM_ANDROID)
-        thr += 0.62f;   // auto cruise thrust on touch devices
+        pitch += tay*0.85f;          // push up = climb, pull down = dive
+        yaw   -= tax*0.55f;          // stick sideways = rudder/yaw
+        roll  -= Touch_LookDX()*0.055f;
+        thr   += 0.85f;              // strong auto-cruise: no constant stalling
+#else
+        pitch += tay; roll -= tax;
 #endif
     }
     P.speed += thr*95*dt;
+#if defined(PLATFORM_ANDROID)
+    if (P.speed<118){ P.speed=118; } // touch: keep the J-20 above stall speed
+    if (P.speed<150) pitch-=0.30f*dt;
+#else
     if (P.speed<78){ P.speed=78; pitch-=0.55f*dt; }          // stall: nose drops
+#endif
     if (P.speed>305)P.speed=305;
+#if defined(PLATFORM_ANDROID)
+    // ground-proximity safety: when terrain rushes up, gently raise the nose so
+    // a beginner on a phone can't auger straight into a ridge at full speed.
+    {
+        float groundClear=P.pos.y-Terrain_Height(P.pos.x,P.pos.z);
+        if(groundClear<70.0f) pitch += (1.0f-groundClear/70.0f)*1.5f*dt;
+    }
+#endif
     Vector3 r=RGTQ(P.q), f=FWDQ(P.q), u=UPQ(P.q);
     Quaternion dq=QuaternionIdentity();
     if(pitch!=0) dq=QuaternionMultiply(QuaternionFromAxisAngle(r, pitch*1.35f*dt),dq);

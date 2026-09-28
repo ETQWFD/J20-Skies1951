@@ -8,6 +8,12 @@ int     gCoopId=0;
 int     gCoopScenario=0;
 NetAddr gCoopHost;
 
+static const char* COOP_MAP[21]={
+ "温井伏击战","云山攻坚战","长津湖·冰雕连","松骨峰阻击战","上甘岭坑道战","金城反击战","汉江夜渡",
+ "三八线阵地战","铁原阻击战","横城反击战","平壤外围战","黄草岭阻击战","飞虎山阻击战","德川宁远反击战",
+ "清川江围歼战","三所里·龙源里穿插","突破临津江","釜谷里阻击战","雪马里围歼战","马良山攻防战","黑云吐岭反击战"};
+static const char* coopMapName(int sc){ if(sc<0||sc>20)sc=0; return COOP_MAP[sc]; }
+
 typedef struct { NetAddr addr; int id; float lastSeen; } Peer;
 static Peer sPeers[NET_MAXPEERS]; static int sPeerN=0;
 static int sStart=0, sStartSc=0;   // client received host "battle start"
@@ -96,9 +102,9 @@ int Coop_PollRooms(CoopRoom*out,int cap,float dt)
     while((n=Net_Poll(&f,b,sizeof b-1))>0)
     {
         b[n]=0; int sc=0,pl=0;
-        if(strncmp(b,"SKG",3)==0){ int g=0; if(sscanf(b,"SKG|%d",&g)==1){ sStart=1; sStartSc=(g>=0&&g<=11)?g:0; } }
+        if(strncmp(b,"SKG",3)==0){ int g=0; if(sscanf(b,"SKG|%d",&g)==1){ sStart=1; sStartSc=(g>=0&&g<=20)?g:0; } }
         else if(sscanf(b,"SKH|%d|%d",&sc,&pl)>=1)
-        { roomTouch(&f,"host",(sc>=0&&sc<=11)?sc:0,pl);
+        { roomTouch(&f,"host",(sc>=0&&sc<=20)?sc:0,pl);
           if(sJoinId>=0 && Net_AddrEq(&f,&sJoinAddr)) { /* ack handled below */ } }
         int id=-1,sc2=0;
         if(sscanf(b,"SKA|%d|%d",&id,&sc2)==2 && sJoinT>0 && Net_AddrEq(&f,&sJoinAddr))
@@ -167,8 +173,8 @@ int Coop_Lobby(void)
             panelTitle("局域网联机 · 同一 WiFi / 热点下互连",120);
             CNC("先在电脑/手机一端创建主机，另一端点“搜索并加入”即可自动发现在线房间",GetScreenWidth()/2,190,18,(Color){205,212,225,235});
             int cx=GetScreenWidth()/2;
-            if(btn("① 创建主机 · 温井伏击战",cx,250,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=0; if(Net_Host())phase=1; }
-            if(btn("② 创建主机 · 长津湖夜战",cx,318,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=2; if(Net_Host())phase=1; }
+            if(btn("① 创建主机（可选全部 21 场战役）",cx,250,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=0; if(Net_Host())phase=1; }
+            if(btn("② 创建主机 · 长津湖·冰雕连",cx,318,440,58)){ gCoopRole=1;gCoopId=0;gCoopScenario=2; if(Net_Host())phase=1; }
             if(btn("③ 搜索并加入主机",cx,386,440,58)){ gCoopRole=2; if(Coop_BeginSearch())phase=2; }
             if(btn("④ 返回主菜单",cx,468,440,54)){ Net_Close();gCoopRole=0; EndDrawing(); return 0; }
             CNC("局域网协同作战：同一 WiFi/热点下，一端创建主机，另一端搜索加入，再由主机开始战斗",cx,GetScreenHeight()-70,16,(Color){170,178,194,220});
@@ -177,11 +183,14 @@ int Coop_Lobby(void)
         else if(phase==1)
         {
             Coop_HostPoll(dt);
-            panelTitle(gCoopScenario==2?"主机已创建 · 长津湖夜战":"主机已创建 · 温井伏击战",110);
+            char ht[80]; snprintf(ht,sizeof ht,"主机已创建 · %s",coopMapName(gCoopScenario)); panelTitle(ht,110);
             int cx=GetScreenWidth()/2;
             CNC("在另一台设备上点“搜索并加入”；人齐后点下面的“开始战斗”",cx,180,20,(Color){215,220,232,255});
             CNC(TextFormat("在线战友：%d 人（含主机）",Coop_PeerCount()+1),cx,232,26,(Color){120,230,150,255});
-            int y=286;
+            // host can pick ANY of the 21 campaigns before starting
+            if(btn("◀ 上一场役",cx-200,272,170,46)){ gCoopScenario=(gCoopScenario+20)%21; }
+            if(btn("下一场役 ▶",cx+200,272,170,46)){ gCoopScenario=(gCoopScenario+1)%21; }
+            int y=340;
             for(int i=0;i<sPeerN;i++){ CNC(TextFormat("战友 %d   %s",sPeers[i].id,sPeers[i].addr.ip),cx,y,18,(Color){200,210,225,255}); y+=28; }
             if(btn("▶ 开始战斗",cx,GetScreenHeight()-170,360,56)){ Coop_HostStartBattle(); EndDrawing(); return 1; }
             if(btn("④ 返回",cx,GetScreenHeight()-100,300,48)){ Net_Close();gCoopRole=0; EndDrawing(); return 0; }
@@ -210,7 +219,7 @@ int Coop_Lobby(void)
                 for(int i=0;i<nr;i++)
                 {
                     char lb[96]; snprintf(lb,sizeof lb,"加入：%s · %s · 在线%d人",
-                        rooms[i].name, rooms[i].scenario==2?"长津湖夜战":"温井伏击战", rooms[i].players+1);
+                        rooms[i].name, coopMapName(rooms[i].scenario), rooms[i].players+1);
                     if(btn(lb,cx,y,520,54)){ Coop_Join(&rooms[i].addr); }
                     y+=64;
             }   }

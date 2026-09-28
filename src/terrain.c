@@ -12,7 +12,7 @@ static Model gSea = (Model){0};
 // one row per campaign (gScenario index): noise offset makes genuinely
 // different ground; ridgeMul/northMul shape the theatre's terrain.
 typedef struct { float ox,oz,ridgeMul,northMul,eastMul,flatR; } MapCfg;
-static const MapCfg MAPS[12]={
+static const MapCfg MAPS[21]={
     {  0.0f,   0.0f, 225.0f,1.00f,1.00f,170.0f}, // 0  温井伏击战 昼·山谷
     { 41.7f, -23.3f, 235.0f,1.05f,0.85f,150.0f}, // 1  云山攻坚战 昼·丘陵
     {-67.4f,  35.9f, 258.0f,1.18f,0.70f,150.0f}, // 2  长津湖·冰雕连 雪夜
@@ -25,15 +25,26 @@ static const MapCfg MAPS[12]={
     {-52.7f,  71.9f, 232.0f,1.02f,0.80f,150.0f}, // 9  横城反击战 黄昏
     { 6.8f,  -77.3f, 240.0f,1.04f,1.10f,130.0f}, // 10 平壤外围战
     {-12.4f,  30.6f, 272.0f,1.22f,0.90f,120.0f}, // 11 黄草岭阻击战 雪·山口
+    { 33.9f,  93.7f, 250.0f,1.10f,0.88f,120.0f}, // 12 飞虎山阻击战 秋·焦土
+    {-74.2f, -12.8f,230.0f,1.00f,0.82f,140.0f}, // 13 德川宁远反击战 昼·河谷
+    { 88.6f,  62.4f, 246.0f,1.08f,0.96f,130.0f}, // 14 清川江围歼战 硝烟
+    {-40.8f,-102.3f,236.0f,1.02f,0.78f,140.0f}, // 15 三所里·龙源里穿插战 黄昏
+    { 63.1f,-128.6f,212.0f,0.88f,0.66f,150.0f}, // 16 突破临津江 雪夜
+    {102.5f,  21.9f, 252.0f,1.12f,1.00f,120.0f}, // 17 釜谷里阻击战 焦土
+    {-96.7f,  80.5f, 244.0f,1.06f,0.92f,130.0f}, // 18 雪马里围歼战 昼·丘陵
+    { 17.8f, 118.2f, 276.0f,1.20f,0.98f,110.0f}, // 19 马良山攻防战 陡山
+    {-62.4f,-135.1f,262.0f,1.14f,0.84f,120.0f}, // 20 黑云吐岭反击战 黄昏
 };
-static const MapCfg* mapCfg(void){ int s=gScenario; if(s<0||s>11)s=0; return &MAPS[s]; }
+static const MapCfg* mapCfg(void){ int s=gScenario; if(s<0||s>20)s=0; return &MAPS[s]; }
 
 // theme queries used by sky / environment / colours / mission text
-int Map_IsNight(void){ return gScenario==2||gScenario==6; }
-int Map_IsSnow(void){ return gScenario==2||gScenario==3||gScenario==11; }
-int Map_IsScorch(void){ return gScenario==4||gScenario==7; }
-int Map_IsDusk(void){ return gScenario==3||gScenario==9; }
+// v1.9: every theatre is a war zone — the sky is smoke-stained everywhere.
+int Map_IsNight(void){ return gScenario==2||gScenario==6||gScenario==16; }
+int Map_IsSnow(void){ return gScenario==2||gScenario==3||gScenario==11||gScenario==16; }
+int Map_IsScorch(void){ return 1; }   // shell-blasted front, all 21 campaigns
+int Map_IsDusk(void){ return gScenario==3||gScenario==9||gScenario==15||gScenario==20; }
 int Map_IsChosin(void){ return gScenario==2; }
+int Map_Count(void){ return 21; }
 
 static inline float heightRaw(float x, float z)
 {
@@ -99,11 +110,12 @@ static Color landColor(float h, float slope, float x, float z)
     else if (h > 165.0f)          c = (Color){236,238,242,255};       // snow
     else if (h > 120.0f)          c = (Color){124,110,96,255};        // high rock
     else if(Map_IsScorch())
-    {   // shell-blasted heights: ash, scorched grass, churned mud
-        if(slope>0.45f)      c=(Color){78,70,60,255};
-        else if(patch>0.28f) c=(Color){104,98,86,255};
-        else if(patch>0.02f) c=(Color){74,72,46,255};
-        else                 c=(Color){70,58,46,255};
+    {   // war-torn ground: scorched olive grass, ash, churned mud patches
+        if(slope>0.45f)      c=(Color){82,72,60,255};
+        else if(patch>0.30f) c=(Color){86,92,58,255};   // shell-shocked grass
+        else if(patch>0.12f) c=(Color){104,96,74,255};  // dry trampled earth
+        else if(patch>-0.06f)c=(Color){64,66,42,255};   // scorched grass
+        else                 c=(Color){58,48,38,255};   // blackened blast craters
     }
     else if (h > 70.0f)           c = (Color){64,86,52,255};          // forest
     else if (h > SEA_Y+6.0f)

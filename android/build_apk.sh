@@ -68,7 +68,7 @@ done
 cat > "$STAGE/AndroidManifest.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="$PKG" android:versionCode="8" android:versionName="1.8">
+    package="$PKG" android:versionCode="9" android:versionName="1.9">
     <uses-sdk android:minSdkVersion="$API" android:targetSdkVersion="$TARGETSDK" />
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -97,12 +97,8 @@ cat > "$STAGE/res/values/strings.xml" <<EOF
 <resources><string name="app_name">$LABEL</string></resources>
 EOF
 
-for d in ldpi mdpi hdpi; do
-  case $d in
-    ldpi) src=$RLSRC/../logo/raylib_36x36.png ;;
-    mdpi) src=$RLSRC/../logo/raylib_48x48.png ;;
-    hdpi) src=$RLSRC/../logo/raylib_72x72.png ;;
-  esac
+for d in ldpi mdpi hdpi xhdpi xxhdpi; do
+  src="$PROJ/android/icons/drawable-$d/icon.png"
   mkdir -p "$STAGE/res/drawable-$d"
   cp -f "$src" "$STAGE/res/drawable-$d/icon.png"
 done

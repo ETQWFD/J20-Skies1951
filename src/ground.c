@@ -35,6 +35,30 @@ static Man wound;                 // one interactable wounded comrade
 static int woundOn=0;
 static int talkOpen=0, talkPage=0;
 static float headMsgT=0;          // "爆头!" feedback
+// kill feed, bottom-left: who just dropped
+#define KF_MAX 5
+typedef struct { char txt[64]; float t; } KFItem;
+static KFItem kf[KF_MAX];
+static void kfPush(const char* t)
+{
+    for(int i=KF_MAX-1;i>0;i--) kf[i]=kf[i-1];
+    snprintf(kf[0].txt,sizeof kf[0].txt,"%s",t); kf[0].t=5.5f;
+}
+static void kfUpdate(float dt){ for(int i=0;i<KF_MAX;i++) if(kf[i].t>0)kf[i].t-=dt; }
+static void drawKillFeed(void)
+{
+    int y=GetScreenHeight()-150;
+    for(int i=KF_MAX-1;i>=0;i--) if(kf[i].t>0)
+    {
+        float a=kf[i].t<0.8f?(kf[i].t/0.8f):1.0f;
+        unsigned char al=(unsigned char)(225*a);
+        Vector2 sz=MeasureTextEx(GameFont(),kf[i].txt,17,0);
+        DrawRectangle(14,y-3,(int)sz.x+16,24,(Color){10,12,16,(unsigned char)(150*a)});
+        DrawRectangle(14,y-3,4,24,(Color){214,60,50,al});
+        CNC(kf[i].txt,26,y,17,(Color){235,225,205,al});
+        y+=27;
+    }
+}
 
 static Vector3 eye, pvel; static float yaw,pitch; static float hp;
 static int weapon, mag[2], reserve[2], reloadTake, reload, foesKilled;
@@ -71,7 +95,7 @@ static void battleFX(float dt)
     burnT-=dt;
     if(burnT<=0)
     {
-        burnT=0.10f;
+        burnT=0.055f;
         float bx=BURN_PT[burnI][0], bz=BURN_PT[burnI][1]; burnI=(burnI+1)%NBURN;
         Vector3 p=(Vector3){bx,Terrain_Height(bx,bz)+1.0f,bz};
         FX_FireLong(p,1.25f);
@@ -81,11 +105,13 @@ static void battleFX(float dt)
     warAmb-=dt;
     if(warAmb<=0)
     {
-        warAmb=0.35f;
-        float rx=frand(-340,340), rz=frand(-420,-30);
+        warAmb=0.16f;
+        float rx=frand(-620,620), rz=frand(-760,-24);
         Vector3 p=(Vector3){rx,Terrain_Height(rx,rz)+1.2f,rz};
-        FX_FireLong(p,frand(0.9f,1.6f));
-        if((irand(0,2))!=0) FX_Smoke((Vector3){p.x,p.y+frand(1.5f,3.5f),p.z},frand(1.6f,2.6f));
+        FX_FireLong(p,frand(1.0f,2.0f));
+        FX_Smoke((Vector3){p.x,p.y+frand(1.5f,4.5f),p.z},frand(1.8f,3.2f));
+        // one in ~5 ambient events is a full distant shell burst
+        if((irand(0,4))==0){ FX_Explosion(p,1.5f); if(!gSelfTest) Sfx_Boom(0.35f); }
     }
 }
 static const char* CRIES[]={"冲啊——！","跟我上！","守住阵地！","为了祖国——！","压过去！"};
@@ -99,6 +125,62 @@ static ETank gTank;
 static int   gInTank=0; static float gTankCd=0, gTankTur=0;
 typedef struct { int on,bombed; Vector3 pos,vel,aim; float t,mg; } EJet;
 static EJet  gJet; static float gJetNext=16.0f;
+
+// ---- pine forest / splintered burnt trunks: deterministic scatter so every
+// machine (host, client, every re-run) sees exactly the same woods. ----
+#define NTREE 220
+typedef struct { Vector3 p; float sc; int burnt; } Tree;
+static Tree gTrees[NTREE];
+static unsigned int thash(unsigned int i,unsigned int j)
+{ unsigned int n=i*73856093u ^ j*19349663u; n^=n<<13; return n*1597334677u; }
+static void buildTrees(void)
+{
+    int n=0;
+    for(int gx=-13;gx<=13 && n<NTREE;gx++)for(int gz=-13;gz<=13 && n<NTREE;gz++)
+    {
+        unsigned h=thash((unsigned)(gx+1000),(unsigned)(gz+1000));
+        if(h%100>40) continue;
+        float fx=gx*94.0f+(int)(h%64)-32;
+        float fz=gz*94.0f+(int)((h>>7)%64)-32;
+        if(fx*fx+fz*fz<245.0f*245.0f) continue;
+        float th=Terrain_Height(fx,fz);
+        if(th>148.0f) continue;
+        if(Terrain_Normal(fx,fz).y<0.70f) continue;
+        int burnt=Map_IsSnow()?0:((h>>15)%100<26);
+        float sc=0.85f+((h>>20)%100)/100.0f*0.85f;
+        gTrees[n++]=(Tree){{fx,th,fz},sc,burnt};
+    }
+    for(;n<NTREE;n++) gTrees[n].p=(Vector3){0,-9999,0};
+}
+static void drawTrees(void)
+{
+    const Vector3 X={1,0,0};
+    for(int i=0;i<NTREE;i++)
+    {
+        Tree*t=&gTrees[i]; if(t->p.y<-9000) continue;
+        float dx=t->p.x-eye.x, dz=t->p.z-eye.z;
+        if(dx*dx+dz*dz>260.0f*260.0f) continue;
+        float y=t->p.y, k=t->sc;
+        if(t->burnt)
+        {
+            DrawPart(P_CYL,C_BLACK,MatrixIdentity(),MPart((Vector3){t->p.x,y+0.85f*k,t->p.z},X,0,(Vector3){0.20f*k,1.7f*k,0.20f*k}));
+            DrawPart(P_BOX,C_BLACK,MatrixIdentity(),MPart((Vector3){t->p.x+0.5f*k,y+1.5f*k,t->p.z},(Vector3){0,1,0},0.5f,(Vector3){0.9f*k,0.10f,0.10f}));
+        }
+        else
+        {
+            DrawPart(P_CYL,C_BROWN,MatrixIdentity(),MPart((Vector3){t->p.x,y+1.15f*k,t->p.z},X,0,(Vector3){0.17f*k,2.3f*k,0.17f*k}));
+            DrawPart(P_CONE,C_DARKOLIVE,MatrixIdentity(),MPart((Vector3){t->p.x,y+2.6f*k,t->p.z},X,0,(Vector3){1.18f*k,2.1f*k,1.18f*k}));
+            DrawPart(P_CONE,C_DARKOLIVE,MatrixIdentity(),MPart((Vector3){t->p.x,y+3.55f*k,t->p.z},X,0,(Vector3){0.90f*k,1.8f*k,0.90f*k}));
+            DrawPart(P_CONE,C_DARKOLIVE,MatrixIdentity(),MPart((Vector3){t->p.x,y+4.4f*k,t->p.z},X,0,(Vector3){0.62f*k,1.5f*k,0.62f*k}));
+            if(Map_IsSnow())
+            {
+                DrawPart(P_CONE,C_WHITE,MatrixIdentity(),MPart((Vector3){t->p.x,y+2.75f*k,t->p.z},X,0,(Vector3){1.02f*k,0.55f*k,1.02f*k}));
+                DrawPart(P_CONE,C_WHITE,MatrixIdentity(),MPart((Vector3){t->p.x,y+3.72f*k,t->p.z},X,0,(Vector3){0.76f*k,0.45f*k,0.76f*k}));
+                DrawPart(P_CONE,C_WHITE,MatrixIdentity(),MPart((Vector3){t->p.x,y+4.6f*k,t->p.z},X,0,(Vector3){0.52f*k,0.4f*k,0.52f*k}));
+            }
+        }
+    }
+}
 static float gShake=0;
 static void warReset(void);
 static void warUpdate(float dt);
@@ -165,13 +247,14 @@ static bool los(Vector3 a,Vector3 b)
     return m.y>h;
 }
 
-static void killFoe(int i,int byPlayer)
+static void killFoe(int i,int byPlayer,const char*how)
 {
     if(!foes[i].alive)return;
     foes[i].alive=0; foes[i].state=9;
     Vector3 c=(Vector3){foes[i].pos.x,foes[i].pos.y+1.1f,foes[i].pos.z};
     FX_Blood(c); addBlood(foes[i].pos);
     if(byPlayer)foesKilled++;
+    if(how&&how[0])kfPush(how);
 }
 
 static void killPal(int i)
@@ -214,7 +297,7 @@ static void melee(void)
         Vector3 c=(Vector3){foes[best].pos.x,foes[best].pos.y+1.2f,foes[best].pos.z};
         FX_Blood(c); Sfx_Foot(); hitMark=0.18f;
         foes[best].hp-=dmg;
-        if(foes[best].hp<=0)killFoe(best,1);
+        if(foes[best].hp<=0)killFoe(best,1,weapon==2?"大刀劈倒美军士兵":"拳击毙美军士兵");
     }
 }
 
@@ -234,7 +317,7 @@ static void explodeGrenade(void)
     for(int i=0;i<NF;i++)if(foes[i].alive)
     {
         float d=vlen(vsub(foes[i].pos,gre.p));
-        if(d<7.0f){ foes[i].hp-=120.0f*(1.0f-d/7.0f); if(foes[i].hp<=0)killFoe(i,1); }
+        if(d<7.0f){ foes[i].hp-=120.0f*(1.0f-d/7.0f); if(foes[i].hp<=0)killFoe(i,1,"手榴弹炸死美军士兵"); }
     }
     float pd=vlen((Vector3){eye.x-gre.p.x,0,eye.z-gre.p.z});
     if(pd<7.5f){ hp-=(1.0f-pd/7.5f)*85.0f; dmgCd=2.0f; }
@@ -344,7 +427,9 @@ static void shoot(void)
         foes[hit].hp-=dmg;
         hitMark=0.18f;
         if(zone==0){ headMsgT=0.6f; Sfx_Flak(); }
-        if(foes[hit].hp<=0)killFoe(hit,1);
+        if(foes[hit].hp<=0)killFoe(hit,1,
+            zone==0?(weapon==0?"狙击爆头 · 一枪毙命":"AKM 爆头击毙敌人")
+                   :(weapon==0?"莫辛-纳甘步枪击毙敌人":"AKM 击毙美军士兵"));
     }
     else
     {
@@ -461,7 +546,7 @@ static void updatePals(float dt)
                 m->fireCd=frand(0.5f,1.4f);
                 Vector3 aim=vadd(tc,v3(frand(-2,2),frand(-2,2),frand(-2,2)));
                 FX_Tracer(chest,aim,(Color){255,235,170,255},0.06f);
-                if(frand(0,1)<0.12f){ foes[tgt].hp-=34; if(foes[tgt].hp<=0)killFoe(tgt,0); }
+                if(frand(0,1)<0.12f){ foes[tgt].hp-=34; if(foes[tgt].hp<=0)killFoe(tgt,0,"战友击毙美军士兵"); }
                 if(frand(0,1)<0.12f){ m->cryT=1.8f; m->cry=irand(0,4); }
             }
         }
@@ -492,7 +577,8 @@ static void updatePlayer(float dt)
         int fireMouse=IsMouseButtonDown(MOUSE_BUTTON_LEFT);
         int adsMouse=IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
 #endif
-        yaw+=mdx*0.0026f; pitch-=mdy*0.0026f;   // 鼠标右移→视角右转
+        float lookMul=1.0f+ads*1.05f;             // 开镜后补偿视角移动速度
+        yaw+=mdx*0.0026f*lookMul; pitch-=mdy*0.0026f*lookMul;   // 鼠标右移→视角右转
         pitch=clampf(pitch,-1.5f,1.5f);
         if(IsKeyPressed(KEY_ONE))weapon=0;
         if(IsKeyPressed(KEY_TWO))weapon=1;
@@ -503,14 +589,14 @@ static void updatePlayer(float dt)
         if(IsKeyPressed(KEY_F))tankToggleMount();
         if(Touch_TalkPressed())tankToggleMount();
         if(fireMouse||Touch_FireHeld()){ if(gInTank){ /* cannon handled in warUpdate */ } else if(weapon>=2)melee(); else shoot(); }
-        // grenade: hold M to charge, release to lob along an arc; tap "雷" on touch
-        if(Touch_GrePressed())throwGrenade(0.65f);
+        // grenade: hold M (desktop) or HOLD the 雷 button (phone) to charge,
+        // release to lob; the dotted parabola is drawn in the 3D pass.
         if(grenades>0&&!gre.on)
         {
-            if(IsKeyDown(KEY_M)){greCharging=1;greHold+=dt/1.15f;if(greHold>1)greHold=1;}
-            else if(greCharging){ throwGrenade(greHold); greCharging=0;greHold=0; }
+            if(IsKeyDown(KEY_M)||Touch_GreHeld()){greCharging=1;greHold+=dt/1.15f;if(greHold>1)greHold=1;}
+            else if(greCharging){ float pw=greHold; greCharging=0;greHold=0; throwGrenade(pw<0.12f?0.45f:pw); }
         }
-        else greCharging=0;
+        else { greCharging=0;greHold=0; }
         adsMouseHold=adsMouse;
     }
     else
@@ -598,6 +684,14 @@ static void updatePlayer(float dt)
             float dx=eye.x-ob[k].x, dz=eye.z-ob[k].z, rr=3.0f;
             float d2=dx*dx+dz*dz;
             if(d2<rr*rr && d2>1e-6f){ float d=sqrtf(d2),push=(rr-d)/d; eye.x+=dx*push; eye.z+=dz*push; }
+        }
+        // tree trunks are solid as well (nearby check only)
+        for(int k=0;k<NTREE;k++) if(gTrees[k].p.y>-9000)
+        {
+            float dx=eye.x-gTrees[k].p.x, dz=eye.z-gTrees[k].p.z;
+            float d2=dx*dx+dz*dz;
+            if(d2<30.0f && d2>1e-6f && d2<0.75f*0.75f)
+            { float d=sqrtf(d2),push=(0.75f-d)/d; eye.x+=dx*push; eye.z+=dz*push; }
         }
     }
     float gy=Terrain_Height(eye.x,eye.z)+1.68f;
@@ -862,7 +956,7 @@ static void avatarShoot(Avatar*a)
     {
         FX_Tracer(mz,hp_,(Color){255,235,170,255},0.06f);
         float dmg=(w==0)?(zone==0?110.0f:50.0f):(zone==0?85.0f:(zone==1?26.0f:16.0f));
-        foes[hit].hp-=dmg; if(foes[hit].hp<=0)killFoe(hit,0);
+        foes[hit].hp-=dmg; if(foes[hit].hp<=0)killFoe(hit,0,"联机战友击毙美军士兵");
     }
     else FX_Tracer(mz,vadd(eye,vmul(d,best)),(Color){255,225,150,255},0.05f);
 }
@@ -1017,6 +1111,7 @@ static void netClientSend(void)
 
 static void netClientRecv(void)
 {
+    static int prevFoe[NF];
     NetAddr from; char buf[NET_MAXPKT]; int n;
     while((n=Net_Poll(&from,buf,sizeof buf))>0)
     {
@@ -1024,12 +1119,15 @@ static void netClientRecv(void)
         gHaveSnap=1; gNetWin=gSnap.win;
         for(int i=0;i<NF;i++)
         {
+            int nowAlive=(gSnap.foes[i].state==1)?1:0;
+            if(gHaveSnap && prevFoe[i] && !nowAlive) kfPush("战友击毙美军士兵");
             foes[i].pos.x=gSnap.foes[i].x; foes[i].pos.z=gSnap.foes[i].z;
             foes[i].pos.y=Terrain_Height(foes[i].pos.x,foes[i].pos.z);
             foes[i].ang=gSnap.foes[i].angC/1000.0f;
             foes[i].hp=gSnap.foes[i].hp;
-            foes[i].alive=(gSnap.foes[i].state==1)?1:0;
+            foes[i].alive=nowAlive;
             foes[i].state=(gSnap.foes[i].state==2)?9:0;
+            prevFoe[i]=nowAlive;
         }
         for(int i=0;i<NP;i++)
         {
@@ -1079,6 +1177,7 @@ static const float MINE_PT[NMINE][2]={
 static void warReset(void)
 {
     gInTank=0; gTankCd=0; gTankTur=0; gShake=0; gJetNext=14.0f; gJet.on=0; gJet.bombed=0;
+    buildTrees();
     gTank=(ETank){(Vector3){70,Terrain_Height(70,-330),-330},M_PI,120.0f,1,0,4.0f};
     for(int i=0;i<NMINE;i++)
     { float x=MINE_PT[i][0], z=MINE_PT[i][1];
@@ -1108,7 +1207,7 @@ static void warSplash(Vector3 p,float rad,float dmg,int foesToo,int oursToo)
     }
     if(foesToo) for(int i=0;i<NF;i++) if(foes[i].alive)
     { float d=vlen(vsub(foes[i].pos,p));
-      if(d<rad){ foes[i].hp-=dmg*1.25f*(1.0f-d/rad); if(foes[i].hp<=0)killFoe(i,1); } }
+      if(d<rad){ foes[i].hp-=dmg*1.25f*(1.0f-d/rad); if(foes[i].hp<=0)killFoe(i,1,"炮火击毙美军士兵"); } }
 }
 
 // tank cannon shell along dir; hills stop the shell and the blast with it
@@ -1385,14 +1484,14 @@ void Ground_Run(int *outMode,int *outEnding)
             {
                 // client: predict own walk, send intent, receive authoritative world
                 updatePlayer(dt); netClientSend(); netClientRecv();
-                FX_Update(dt); battleFX(dt); Env_Update(dt); if(introT>0)introT-=dt;
+                FX_Update(dt); battleFX(dt); Env_Update(dt); kfUpdate(dt); if(introT>0)introT-=dt;
             }
             else
             {
                 if(gCoopRole==1) netHostRecv(dt);
                 updatePlayer(dt); updateFoes(dt); updatePals(dt); warUpdate(dt);
                 if(gCoopRole==1) netHostSend(celebrate>0?1:0);
-                FX_Update(dt); battleFX(dt); Env_Update(dt); if(introT>0)introT-=dt;
+                FX_Update(dt); battleFX(dt); Env_Update(dt); kfUpdate(dt); if(introT>0)introT-=dt;
                 // distant, off-screen battle: random booms and smoke over the ridge
                 if(!gSelfTest){ ambT-=dt;
                     if(ambT<=0){ ambT=frand(4,9); Sfx_Boom(0.22f);
@@ -1450,7 +1549,7 @@ void Ground_Run(int *outMode,int *outEnding)
         Scene_SetCamera(cam);
 
         BeginDrawing();
-        ClearBackground((Color){158,188,214,255});
+        ClearBackground((Color){118,110,96,255});
         Env_DrawSky2D();
         BeginMode3D(cam);
         Terrain_Draw(cam); Sea_Draw(cam); Env_Draw(cam);
@@ -1471,6 +1570,7 @@ void Ground_Run(int *outMode,int *outEnding)
         DrawVehicle((Vector3){170, Terrain_Height(170,-180), -180}, 1.0f, 0, 1.0f);
         // live battlefield systems: mines, the enemy/captured tank, strafing runs
         if(gCoopRole!=2) warDraw();
+        drawTrees();
         // shell craters / scorch marks — the ground must read as fought over
         for(int i=0;i<NBURN;i++){ float bx=BURN_PT[i][0],bz=BURN_PT[i][1];
             DrawPart(P_CYL,C_DARK,MatrixIdentity(),
@@ -1493,9 +1593,9 @@ void Ground_Run(int *outMode,int *outEnding)
             Vector3 d2=aimDir();
             Vector3 p0=vadd(eye,vadd(vmul(d2,0.7f),(Vector3){0,0.15f,0}));
             Vector3 v0=vadd(vmul(d2,9+11*greHold),(Vector3){0,3.6f+1.6f*greHold,0});
-            for(int s2=1;s2<=14;s2++)
+            for(int s2=1;s2<=24;s2++)
             {
-                float tt=0.12f*s2;
+                float tt=0.11f*s2;
                 Vector3 qp=(Vector3){p0.x+v0.x*tt,p0.y+v0.y*tt-0.5f*GRAVITY*tt*tt,p0.z+v0.z*tt};
                 DrawPart(P_SPHERE,C_YELLOW,MatrixIdentity(),MPart(qp,(Vector3){1,0,0},0,(Vector3){0.10f,0.10f,0.10f}));
             }
@@ -1510,7 +1610,7 @@ void Ground_Run(int *outMode,int *outEnding)
         EndMode3D();
         if(paused) Touch_DrawPauseMenu();
         else {
-            drawHud(); drawScope(); Touch_DrawHUD(); drawTalk();
+            drawHud(); drawKillFeed(); drawScope(); Touch_DrawHUD(); drawTalk();
             if(gInTank) CNC("坦克：W/S 行驶 · A/D 转向 · 鼠标/火 开炮 · F / “话”下车",
                 GetScreenWidth()/2,GetScreenHeight()-26,16,(Color){255,230,170,235});
             else if(!gTank.alive && gCoopRole!=2)
