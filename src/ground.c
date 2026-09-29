@@ -401,7 +401,9 @@ static void shoot(void)
     if(reload>0||fireCd>0)return;
     if(mag[weapon]<=0){ reloadWeapon(); return; }
     mag[weapon]--; fireCd = weapon==0?0.75f:0.10f; Sfx_Gun();
-    Vector3 d=vnorm(vadd(aimDir(),v3(frand(-.012f,.012f),frand(-.012f,.012f),frand(-.012f,.012f))));
+    // 散布：莫辛本就极准(.002)，AKM 连发有散布；开镜后整体再收窄到 0.4（对齐网页版）
+    float sp=(weapon==0?0.002f:0.012f)*(ads>0.6f?0.4f:1.0f);
+    Vector3 d=vnorm(vadd(aimDir(),v3(frand(-sp,sp),frand(-sp,sp),frand(-sp,sp))));
     Vector3 mz=RifleMuzzle(cam,weapon);
     FX_Muzzle(mz);
     float gT=terrainRayT(eye,d);
@@ -577,7 +579,7 @@ static void updatePlayer(float dt)
         int fireMouse=IsMouseButtonDown(MOUSE_BUTTON_LEFT);
         int adsMouse=IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
 #endif
-        float lookMul=1.0f+ads*1.05f;             // 开镜后补偿视角移动速度
+        float lookMul=1.0f-ads*0.30f;             // 开镜后降低灵敏度（对齐网页版手感 ×0.7），更稳更跟手
         yaw+=mdx*0.0026f*lookMul; pitch-=mdy*0.0026f*lookMul;   // 鼠标右移→视角右转
         pitch=clampf(pitch,-1.5f,1.5f);
         if(IsKeyPressed(KEY_ONE))weapon=0;
@@ -1526,7 +1528,7 @@ void Ground_Run(int *outMode,int *outEnding)
         if(gShake>0.01f)   // shell shock camera shake
         { float s=gShake*0.55f; Vector3 sh=v3(frand(-s,s),frand(-s,s),frand(-s,s));
           cam.position=vadd(cam.position,sh); cam.target=vadd(cam.target,sh); }
-        { float fovTarget=(weapon==0)?(72.0f/15.0f):42.0f;  // 15x sniper scope, iron-sight ADS
+        { float fovTarget=(weapon==0)?28.0f:52.0f;   // 对齐网页版：莫辛 28° 稳定高倍镜，AKM 52° 机瞄（插值平滑）
           cam.fovy=72.0f-ads*(72.0f-fovTarget); }
         // hide the first-person gun when something is right in front of the
         // muzzle (steep ground / wall / a soldier) so it can't clip through.
