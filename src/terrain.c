@@ -201,38 +201,33 @@ void Sea_Draw(Camera3D cam)
 }
 
 // ---- battlefield ground cover: dry reeds / scorched grass / snow tufts ----
-// Crossed blade cards instanced in a disc that follows the camera. Anchored to
-// WORLD cells (not the camera), so tufts stay put while walking and only the
-// visible set is built (cache rebuilt on crossing a cell / changing map).
+// ALL visible tufts are baked into ONE mesh (a single draw call) in a disc that
+// follows the camera. This avoids GPU instancing (not reliably supported on old
+// GLES2 / low-end phones) and stays cheap. Anchored to WORLD cells, so tufts
+// stay put while walking; the merged mesh is rebuilt only on crossing a cell.
 extern Shader gLit;
-#define GR_MAX 2400
-static Mesh     gBlade={0};
-static Material gBladeMat={0};
-static Matrix   gGrassXf[GR_MAX];
-static int      gGrassN=0, gGrassReady=0;
+#if defined(PLATFORM_ANDROID)
+  #define GR_MAX 700      // low/old phones: fewer tufts to keep the frame budget
+#else
+  #define GR_MAX 2200
+#endif
+#define GR_VPER 8
+#define GR_IPER 12
+static Mesh     gGrassMesh={0};
+static Material gGrassMat={0};
+static int      gGrassN=0, gGrassReady=0, gHasMesh=0;
 static int      gCellX=1<<30, gCellZ=1<<30, gCellSc=-1;
 
-static Mesh makeBladeMesh(void)
-{
-    const float w=0.09f, h=0.62f;
-    Mesh m={0}; m.vertexCount=8; m.triangleCount=4;
-    m.vertices=(float*)MemAlloc(sizeof(float)*24);
-    m.normals =(float*)MemAlloc(sizeof(float)*24);
-    m.texcoords=(float*)MemAlloc(sizeof(float)*16);
-    m.indices =(unsigned short*)MemAlloc(sizeof(unsigned short)*12);
-    // quad A runs along X, quad B along Z -> an X seen from any azimuth
-    float V[8*3]={ -w,0,0,  w,0,0,  w,h,0,  -w,h,0,
-                    0,0,-w, 0,0,w,  0,h,w,   0,h,-w };
-    memcpy(m.vertices,V,sizeof(V));
-    for(int i=0;i<4;i++){ m.normals[i*3]=0;m.normals[i*3+1]=0.35f;m.normals[i*3+2]=0.94f; }
-    for(int i=4;i<8;i++){ m.normals[i*3]=0.94f;m.normals[i*3+1]=0.35f;m.normals[i*3+2]=0; }
-    float UV[16]={0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1};
-    memcpy(m.texcoords,UV,sizeof(UV));
-    unsigned short I[12]={0,1,2,0,2,3, 4,5,6,4,6,7};
-    memcpy(m.indices,I,sizeof(I));
-    UploadMesh(&m,false);
-    return m;
-}
+// one crossed blade in local space: quad A along X, quad B along Z
+static const float BL_V[GR_VPER*3]={
+    -0.09f,0,0,  0.09f,0,0,  0.09f,0.62f,0,  -0.09f,0.62f,0,
+     0,0,-0.09f, 0,0,0.09f, 0,0.62f,0.09f,  0,0.62f,-0.09f };
+static const float BL_N[GR_VPER*3]={
+    0,0.35f,0.94f, 0,0.35f,0.94f, 0,0.35f,0.94f, 0,0.35f,0.94f,
+    0.94f,0.35f,0, 0.94f,0.35f,0, 0.94f,0.35f,0, 0.94f,0.35f,0 };
+static const float BL_UV[GR_VPER*2]={0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1};
+static const unsigned short BL_I[GR_IPER]={0,1,2,0,2,3, 4,5,6,4,6,7};
+
 static unsigned int grHash(int x,int z){ unsigned int h=(unsigned int)(x*73856093) ^ (unsigned int)(z*19349663); h^=h>>13; h*=1274126177u; h^=h>>16; return h; }
 static float h01(unsigned int h){ return (h>>8)*(1.0f/16777216.0f); }
 
@@ -242,10 +237,17 @@ static void grassRebuild(float px, float pz)
     int cx=(int)floorf(px/STEP), cz=(int)floorf(pz/STEP);
     gCellX=cx; gCellZ=cz; gCellSc=gScenario; gGrassN=0;
     int snow=Map_IsSnow();
-    for(int iz=-RCELL; iz<=RCELL && gGrassN<GR_MAX; iz++)
-    for(int ix=-RCELL; ix<=RCELL && gGrassN<GR_MAX; ix++)
+    // Each rebuild owns FRESH CPU arrays; this raylib build's UnloadMesh frees
+    // the mesh's CPU vertex/index arrays, so we must never reuse/re-free them.
+    float *vx=(float*)MemAlloc(sizeof(float)*3*GR_MAX*GR_VPER);
+    float *nx=(float*)MemAlloc(sizeof(float)*3*GR_MAX*GR_VPER);
+    float *uv=(float*)MemAlloc(sizeof(float)*2*GR_MAX*GR_VPER);
+    unsigned short*ix=(unsigned short*)MemAlloc(sizeof(unsigned short)*GR_MAX*GR_IPER);
+    int n=0;
+    for(int iz=-RCELL; iz<=RCELL && n<GR_MAX; iz++)
+    for(int ix_= -RCELL; ix_<=RCELL && n<GR_MAX; ix_++)
     {
-        int wx=cx+ix, wz=cz+iz;
+        int wx=cx+ix_, wz=cz+iz;
         unsigned int h1=grHash(wx,wz);
         if(h01(h1) < 0.30f) continue;                 // leave bare patches / mud
         float jx=(h01(h1^0x9e37u)-0.5f)*STEP;
@@ -255,35 +257,73 @@ static void grassRebuild(float px, float pz)
         float dx=X-px, dz=Z-pz; if(dx*dx+dz*dz > (RCELL*STEP)*(RCELL*STEP)) continue;
         float Y=Terrain_Height(X,Z);
         if(Y<=SEA_Y+1.2f) continue;                  // no reeds under water
-        Vector3 n=Terrain_Normal(X,Z);
-        if(n.y<0.62f) continue;                      // skip steep rock faces
+        Vector3 nm=Terrain_Normal(X,Z);
+        if(nm.y<0.62f) continue;                     // skip steep rock faces
         float yaw=h01(h1^0x1234u)*6.2832f;
         float sy=(snow?0.55f:0.8f)+h01(h1^0x5678u)*(snow?0.7f:0.9f);
-        float sx=0.85f+h01(h1^0x9abcu)*0.3f;
-        Matrix m=MatrixMultiply(
-                   MatrixMultiply(MatrixRotateY(yaw),MatrixScale(sx,sy,sx)),
-                   MatrixTranslate(X,Y-0.02f,Z));
-        gGrassXf[gGrassN++]=m;
+        float sxx=0.85f+h01(h1^0x9abcu)*0.3f;
+        float cs=cosf(yaw), sn=sinf(yaw);
+        int base=n*GR_VPER;
+        for(int v=0;v<GR_VPER;v++)
+        {
+            float lx=BL_V[v*3]*sxx, ly=BL_V[v*3+1]*sy, lz=BL_V[v*3+2]*sxx;
+            vx[(base+v)*3]   = X + lx*cs - lz*sn;
+            vx[(base+v)*3+1] = Y - 0.02f + ly;
+            vx[(base+v)*3+2] = Z + lx*sn + lz*cs;
+            float nvx=BL_N[v*3], nvy=BL_N[v*3+1], nvz=BL_N[v*3+2];
+            nx[(base+v)*3]   = nvx*cs - nvz*sn;
+            nx[(base+v)*3+1] = nvy;
+            nx[(base+v)*3+2] = nvx*sn + nvz*cs;
+            uv[(base+v)*2]=BL_UV[v*2]; uv[(base+v)*2+1]=BL_UV[v*2+1];
+        }
+        for(int t=0;t<GR_IPER;t++) ix[n*GR_IPER+t]=(unsigned short)(base+BL_I[t]);
+        n++;
     }
-    (void)snow;
+    gGrassN=n;
+    if(gHasMesh) UnloadMesh(gGrassMesh);   // frees the PREVIOUS mesh's CPU arrays
+    memset(&gGrassMesh,0,sizeof gGrassMesh);
+    if(n==0)
+    {
+        // nothing to show: release the scratch arrays for this empty rebuild
+        MemFree(vx); MemFree(nx); MemFree(uv); MemFree(ix);
+        gHasMesh=0;
+        return;
+    }
+    gGrassMesh.vertexCount=n*GR_VPER;
+    gGrassMesh.triangleCount=n*(GR_IPER/3);
+    gGrassMesh.vertices=vx; gGrassMesh.normals=nx; gGrassMesh.texcoords=uv; gGrassMesh.indices=ix;
+    UploadMesh(&gGrassMesh,true);            // dynamic: rebuilt while walking
+    gHasMesh=1;
+}
+
+// GL resources are created per scene OUTSIDE BeginMode3D and bound to that
+// scene's gLit, so a scene re-entry can never leave a dead shader / VAO.
+void Grass_Init(void)
+{
+    if(gGrassReady)return;
+    gGrassMat=LoadMaterialDefault();
+    if(gLit.id>0) gGrassMat.shader=gLit;
+    gCellX=1<<30; gCellZ=1<<30; gCellSc=-1; gGrassN=0; gHasMesh=0;
+    gGrassReady=1;
+}
+void Grass_Unload(void)
+{
+    if(!gGrassReady)return;
+    if(gHasMesh){ UnloadMesh(gGrassMesh); gHasMesh=0; }  // frees CPU arrays too
+    MemFree(gGrassMat.maps);
+    gGrassReady=0; gGrassN=0; memset(&gGrassMesh,0,sizeof gGrassMesh);
 }
 
 void Grass_Draw(Camera3D cam)
 {
-    if(!gGrassReady)
-    {
-        gBlade=makeBladeMesh();
-        gBladeMat=LoadMaterialDefault();
-        gGrassReady=1;
-    }
-    if(gLit.id>0) gBladeMat.shader=gLit;   // gLit is recreated each Scene_Load
-    gBladeMat.maps[MATERIAL_MAP_DIFFUSE].color =
+    if(!gGrassReady)return;
+    gGrassMat.maps[MATERIAL_MAP_DIFFUSE].color =
         Map_IsSnow() ? (Color){158,148,112,255}      // dry reeds through snow
                      : (Color){96,110,58,255};        // scorched olive grass
     const float STEP=2.6f;
     int cx=(int)floorf(cam.position.x/STEP), cz=(int)floorf(cam.position.z/STEP);
     if(cx!=gCellX||cz!=gCellZ||gScenario!=gCellSc) grassRebuild(cam.position.x,cam.position.z);
-    if(gGrassN>0) DrawMeshInstanced(gBlade,gBladeMat,gGrassXf,gGrassN);
+    if(gHasMesh) DrawMesh(gGrassMesh,gGrassMat,MatrixIdentity());
 }
 
 void Terrain_Draw(Camera3D cam)

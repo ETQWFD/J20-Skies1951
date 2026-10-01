@@ -231,12 +231,14 @@ void Scene_Load(void)
     texFire=makeGlow(1);
     FX_Init();
     GunsNative_Load();
+    Grass_Init();
     sReady=true;
 }
 void Scene_Unload(void)
 {
     if (sReady)
     {
+        Grass_Unload();
         GunsNative_Unload();
         for (int i=0;i<P_SHAPE_COUNT;i++) UnloadMesh(sMesh[i]);
         UnloadTexture(texGlow); UnloadTexture(texFire);

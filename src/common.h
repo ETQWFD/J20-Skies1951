@@ -59,6 +59,8 @@ float  Terrain_Height(float x, float z);
 int    Map_Count(void);
 Vector3 Terrain_Normal(float x, float z);
 void   Terrain_Draw(Camera3D cam);
+void   Grass_Init(void);
+void   Grass_Unload(void);
 void   Sea_Draw(Camera3D cam);
 extern Model gTerrain;
 extern int   gTerrainReady;

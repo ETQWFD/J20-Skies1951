@@ -53,6 +53,10 @@ static Gun build(const GGunData* d)
             if(img.data)
             {
                 Texture2D t=LoadTextureFromImage(img);
+                // Old GLES2 GPUs reject REPEAT wrapping on non-power-of-two JPEGs
+                // (incomplete texture -> driver crash/black screen). Gun skins
+                // never tile, so force edge CLAMP on both axes.
+                SetTextureWrap(t,TEXTURE_WRAP_CLAMP);
                 SetMaterialTexture(&mat,MATERIAL_MAP_DIFFUSE,t);
                 o->tex=t; o->hasTex=1;
                 UnloadImage(img);
@@ -69,6 +73,10 @@ void GunsNative_Load(void)
     // first-person limbs
     mSleeve=GenMeshCylinder(0.038f,0.34f,10);
     mHand  =GenMeshSphere(0.046f,12,10);
+    // MUST upload before DrawMesh: a zero VAO id is tolerated by software GL but
+    // crashes real desktop/Adreno drivers on the first first-person frame.
+    UploadMesh(&mSleeve,false);
+    UploadMesh(&mHand,false);
     mSleeveMat=LoadMaterialDefault(); mHandMat=LoadMaterialDefault();
     if(gLit.id>0){ mSleeveMat.shader=gLit; mHandMat.shader=gLit; }
     mSleeveMat.maps[MATERIAL_MAP_DIFFUSE].color=(Color){124,108,72,255};  // khaki wool sleeve
@@ -145,6 +153,7 @@ static void drawLimb(Vector3 wrist, Vector3 elbow)
     if(!sArmsReady)return;
     Vector3 d=vsub(wrist,elbow); float len=vlen(d);
     if(len<0.001f)return;
+    if(mSleeve.vaoId==0)return;   // never draw an un-uploaded mesh (strict-driver crash)
     Vector3 a=vmul(d,1.0f/len);
     Vector3 mid=vmul(vadd(wrist,elbow),0.5f);
     Quaternion qa=QuaternionFromVector3ToVector3((Vector3){0,1,0},a);
@@ -183,7 +192,7 @@ void GunsNative_DrawView(Camera3D cam, int type, float kick)
     }
     Matrix M=MatrixMultiply(QuaternionToMatrix(q),MatrixTranslate(grip.x,grip.y,grip.z));
     Matrix base=MatrixMultiply(MatrixScale(S,S,S),M);
-    for(int i=0;i<g->n;i++) DrawMesh(g->s[i].mesh,g->s[i].mat,base);
+    for(int i=0;i<g->n;i++) if(g->s[i].mesh.vaoId>0) DrawMesh(g->s[i].mesh,g->s[i].mat,base);
     sMuzzle=vadd(grip,vmul(f,0.5f*S));
 
     // hands gripping the weapon from below: right on the pistol grip/trigger,
