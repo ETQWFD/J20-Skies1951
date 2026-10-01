@@ -1,0 +1,202 @@
+// guns_native.c - render embedded PBR small-arms (generated guns_data.c) with raylib
+#include "common.h"
+#include "guns_native.h"
+#include "guns_data.h"
+#include "rlgl.h"
+
+extern Shader gLit;   // scene.c lit shader
+
+#define SWING_DUR 0.28f
+static float sSwingT=0;
+static Vector3 sMuzzle={0};
+static int sReady=0;
+
+typedef struct { Mesh mesh; Material mat; int hasTex; Texture2D tex; } Sub;
+typedef struct { Sub* s; int n; } Gun;
+static Gun gRifle={0}, gAkm={0}, gKnife={0};
+
+// first-person arms (khaki volunteer-uniform sleeves + skin hands), drawn
+// gripping the real weapon: right hand on the grip/trigger, left hand under
+// the fore-end so the rifle is actually supported.
+static Mesh mSleeve={0}, mHand={0};
+static Material mSleeveMat={0}, mHandMat={0};
+static int sArmsReady=0;
+static void gunParams(int type, float*S, float*fF, float*fR, float*fU,
+                      float*pYaw, float*pPitch, float*pRoll);
+
+static Gun build(const GGunData* d)
+{
+    Gun g={0}; g.n=d->nsub; g.s=(Sub*)calloc(g.n,sizeof(Sub));
+    for(int i=0;i<g.n;i++)
+    {
+        const GSubData* sd=&d->sub[i];
+        Mesh m={0};
+        m.vertexCount=sd->vcount; m.triangleCount=sd->icount/3;
+        m.vertices=(float*)MemAlloc(sizeof(float)*3*sd->vcount);
+        m.normals =(float*)MemAlloc(sizeof(float)*3*sd->vcount);
+        m.texcoords=(float*)MemAlloc(sizeof(float)*2*sd->vcount);
+        memcpy(m.vertices,sd->pos,sizeof(float)*3*sd->vcount);
+        memcpy(m.normals, sd->nrm,sizeof(float)*3*sd->vcount);
+        // glTF UV origin top-left; raylib image origin top-left after load
+        for(int v=0;v<sd->vcount;v++){ m.texcoords[v*2]=sd->uv[v*2]; m.texcoords[v*2+1]=1.0f-sd->uv[v*2+1]; }
+        unsigned short* idx=(unsigned short*)MemAlloc(sizeof(unsigned short)*sd->icount);
+        for(int k=0;k<sd->icount;k++) idx[k]=(unsigned short)(sd->idx32?sd->idx32[k]:sd->idx16[k]);
+        m.indices=idx;
+        UploadMesh(&m,false);
+        Material mat=LoadMaterialDefault();
+        if(gLit.id>0) mat.shader=gLit;
+        Sub* o=&g.s[i]; o->mesh=m; o->mat=mat; o->hasTex=0;
+        if(sd->tex>=0)
+        {
+            const unsigned char* bytes=d->tex[sd->tex]; int len=d->texlen[sd->tex];
+            Image img=LoadImageFromMemory(".jpg",bytes,len);
+            if(img.data)
+            {
+                Texture2D t=LoadTextureFromImage(img);
+                SetMaterialTexture(&mat,MATERIAL_MAP_DIFFUSE,t);
+                o->tex=t; o->hasTex=1;
+                UnloadImage(img);
+            }
+        }
+    }
+    return g;
+}
+
+void GunsNative_Load(void)
+{
+    if(sReady)return;
+    gRifle=build(&G_RIFLE); gAkm=build(&G_AKM); gKnife=build(&G_KNIFE);
+    // first-person limbs
+    mSleeve=GenMeshCylinder(0.038f,0.34f,10);
+    mHand  =GenMeshSphere(0.046f,12,10);
+    mSleeveMat=LoadMaterialDefault(); mHandMat=LoadMaterialDefault();
+    if(gLit.id>0){ mSleeveMat.shader=gLit; mHandMat.shader=gLit; }
+    mSleeveMat.maps[MATERIAL_MAP_DIFFUSE].color=(Color){124,108,72,255};  // khaki wool sleeve
+    mHandMat.maps[MATERIAL_MAP_DIFFUSE].color  =(Color){200,166,132,255}; // skin
+    sArmsReady=1;
+    sReady=1;
+}
+void GunsNative_Unload(void)
+{
+    if(!sReady)return;
+    Gun gs[3]={gRifle,gAkm,gKnife};
+    // NB: this raylib build's UnloadMaterial() also frees material.shader. All gun
+    // materials SHARE gLit (owned/freed by scene.c), so tear down maps+texture
+    // manually and never let UnloadMaterial release the shared shader.
+    for(int gi=0;gi<3;gi++) for(int i=0;i<gs[gi].n;i++)
+    {
+        Sub* o=&gs[gi].s[i];
+        UnloadMesh(o->mesh);
+        if(o->hasTex) UnloadTexture(o->tex);
+        MemFree(o->mat.maps);
+    }
+    if(sArmsReady)
+    {
+        UnloadMesh(mSleeve); UnloadMesh(mHand);
+        MemFree(mSleeveMat.maps); MemFree(mHandMat.maps);
+        sArmsReady=0;
+    }
+    sReady=0;
+}
+int GunsNative_Ready(void){ return sReady; }
+
+void Weapon_SwingTickNative(void){ sSwingT=SWING_DUR; }
+void Weapon_AnimUpdateNative(float dt){ if(sSwingT>0){sSwingT-=dt; if(sSwingT<0)sSwingT=0;} }
+Vector3 GunsNative_Muzzle(void){ return sMuzzle; }
+
+Vector3 GunsNative_MuzzlePoint(Camera3D cam, int type)
+{
+    if(!sReady)return cam.position;
+    float S,fF,fR,fU,y,p,rl; gunParams(type,&S,&fF,&fR,&fU,&y,&p,&rl); (void)y;(void)p;(void)rl;
+    Vector3 f=vnorm(vsub(cam.target,cam.position));
+    Vector3 r=vnorm(vcross(f,cam.up));
+    Vector3 u=cam.up;
+    Vector3 grip=vadd(cam.position, vadd(vmul(f,fF), vadd(vmul(r,fR), vmul(u,fU))));
+    return vadd(grip,vmul(f,0.5f*S));
+}
+
+// per-weapon first-person placement: world length, grip offset (along
+// forward / right / up) from the camera, and a view-model pose (local
+// yaw/pitch/roll) so the weapon sits diagonally across the lower-right
+// instead of being seen edge-on down the barrel.
+static void gunParams(int type, float*S, float*fF, float*fR, float*fU,
+                      float*pYaw, float*pPitch, float*pRoll)
+{
+    if(type==1){ *S=0.84f; *fF=0.58f; *fR=0.22f; *fU=-0.22f;
+                 *pYaw=0.55f; *pPitch=0.10f; *pRoll=0.0f; }          // AKM (settled FPS pose)
+    else if(type==2){ *S=0.58f; *fF=0.56f; *fR=0.13f; *fU=-0.17f;
+                      *pYaw=-0.05f; *pPitch=0.10f; *pRoll=-0.15f; }  // bayonet
+    else { *S=0.95f; *fF=0.60f; *fR=0.20f; *fU=-0.20f;
+           *pYaw=0.42f; *pPitch=0.08f; *pRoll=0.0f; }                // Mosin / 98k
+}
+static Vector3 gunGrip(Camera3D cam, int type, float kick)
+{
+    float S,fF,fR,fU,y,p,rl; gunParams(type,&S,&fF,&fR,&fU,&y,&p,&rl); (void)S;(void)y;(void)p;(void)rl;
+    Vector3 f=vnorm(vsub(cam.target,cam.position));
+    Vector3 r=vnorm(vcross(f,cam.up));
+    Vector3 u=cam.up;
+    return vadd(cam.position,
+        vadd(vmul(f,fF+0.08f*kick),
+        vadd(vmul(r,fR), vmul(u,fU+0.045f*kick))));
+}
+// draw a khaki-sleeved forearm from elbow to wrist plus a skin hand at the wrist
+static void drawLimb(Vector3 wrist, Vector3 elbow)
+{
+    if(!sArmsReady)return;
+    Vector3 d=vsub(wrist,elbow); float len=vlen(d);
+    if(len<0.001f)return;
+    Vector3 a=vmul(d,1.0f/len);
+    Vector3 mid=vmul(vadd(wrist,elbow),0.5f);
+    Quaternion qa=QuaternionFromVector3ToVector3((Vector3){0,1,0},a);
+    Matrix ms=MatrixMultiply(MatrixScale(1.0f,len/0.34f,1.0f),
+               MatrixMultiply(QuaternionToMatrix(qa),MatrixTranslate(mid.x,mid.y,mid.z)));
+    DrawMesh(mSleeve,mSleeveMat,ms);
+    Matrix mh=MatrixTranslate(wrist.x,wrist.y,wrist.z);
+    DrawMesh(mHand,mHandMat,mh);
+}
+
+void GunsNative_DrawView(Camera3D cam, int type, float kick)
+{
+    if(!sReady)return;
+    // view-model always renders on top and never clips into nearby walls/ground
+    rlDisableDepthTest();
+    Gun* g = type==1?&gAkm : type==2?&gKnife : &gRifle;    float S,fF,fR,fU,pYaw,pPitch,pRoll; gunParams(type,&S,&fF,&fR,&fU,&pYaw,&pPitch,&pRoll);
+    Vector3 f=vnorm(vsub(cam.target,cam.position));
+    Vector3 grip=gunGrip(cam,type,kick);
+    float yaw=atan2f(-f.x,-f.z);
+    float pitch=asinf(clampf(f.y,-1,1)) + kick*0.10f;
+    Quaternion qCam=QuaternionMultiply(QuaternionFromAxisAngle((Vector3){0,1,0},yaw),
+                                       QuaternionFromAxisAngle((Vector3){1,0,0},pitch));
+    // local view-model pose: swing the muzzle toward screen centre, dip it a touch
+    Quaternion qPose=QuaternionMultiply(
+        QuaternionMultiply(QuaternionFromAxisAngle((Vector3){0,1,0},pYaw),
+                           QuaternionFromAxisAngle((Vector3){1,0,0},pPitch)),
+        QuaternionFromAxisAngle((Vector3){0,0,1},pRoll));
+    Quaternion q=QuaternionMultiply(qCam,qPose);
+    if(type==2 && sSwingT>0)
+    {
+        float ph=1.0f-sSwingT/SWING_DUR;
+        float beat=sinf(ph*M_PI);
+        q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){1,0,0},-1.45f*beat));
+        q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){0,1,0}, 0.6f*(ph-0.5f)));
+        grip=vadd(grip,vmul(f,0.22f*beat));
+    }
+    Matrix M=MatrixMultiply(QuaternionToMatrix(q),MatrixTranslate(grip.x,grip.y,grip.z));
+    Matrix base=MatrixMultiply(MatrixScale(S,S,S),M);
+    for(int i=0;i<g->n;i++) DrawMesh(g->s[i].mesh,g->s[i].mat,base);
+    sMuzzle=vadd(grip,vmul(f,0.5f*S));
+
+    // hands gripping the weapon from below: right on the pistol grip/trigger,
+    // left supporting the fore-end. Forearms run front-to-back under the rifle.
+    Vector3 rr=vnorm(vcross(f,cam.up)), uu=cam.up;
+    Vector3 rWrist = vadd(grip, vadd(vmul(f,-0.05f), vmul(uu,-0.105f)));
+    Vector3 rElbow = vadd(rWrist, vadd(vmul(f,-0.30f), vadd(vmul(rr,0.12f), vmul(uu,-0.20f))));
+    drawLimb(rWrist,rElbow);
+    if(type!=2)
+    {
+        Vector3 lWrist = vadd(grip, vadd(vmul(f,0.30f*S), vadd(vmul(rr,-0.02f), vmul(uu,-0.10f))));
+        Vector3 lElbow = vadd(lWrist, vadd(vmul(f,-0.26f), vadd(vmul(rr,-0.16f), vmul(uu,-0.22f))));
+        drawLimb(lWrist,lElbow);
+    }
+    rlEnableDepthTest();
+}

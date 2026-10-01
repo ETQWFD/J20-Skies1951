@@ -3,6 +3,7 @@
 #include "noise.h"
 #include "rlgl.h"
 #include "meshgen.h"
+#include "guns_native.h"
 
 // ----------------------------------------------------------------------------
 // Embedded GLSL 330 lit shader: Lambert + hemisphere ambient + distance fog.
@@ -229,12 +230,14 @@ void Scene_Load(void)
     texGlow=makeGlow(0);
     texFire=makeGlow(1);
     FX_Init();
+    GunsNative_Load();
     sReady=true;
 }
 void Scene_Unload(void)
 {
     if (sReady)
     {
+        GunsNative_Unload();
         for (int i=0;i<P_SHAPE_COUNT;i++) UnloadMesh(sMesh[i]);
         UnloadTexture(texGlow); UnloadTexture(texFire);
         if (gLit.id>0) UnloadShader(gLit);
@@ -492,8 +495,8 @@ void DrawVehicle(Vector3 pos, float yaw, int kind, float scale)
 static Vector3 sMuzzle;
 static float sSwingT=0;                 // >0 while a blade/fist swing is playing
 #define SWING_DUR 0.28f
-void Weapon_SwingTick(void){ sSwingT=SWING_DUR; }
-void Weapon_AnimUpdate(float dt){ if(sSwingT>0){ sSwingT-=dt; if(sSwingT<0)sSwingT=0; } }
+void Weapon_SwingTick(void){ sSwingT=SWING_DUR; Weapon_SwingTickNative(); }
+void Weapon_AnimUpdate(float dt){ if(sSwingT>0){ sSwingT-=dt; if(sSwingT<0)sSwingT=0; } Weapon_AnimUpdateNative(dt); }
 
 // own legs striding at the bottom of the view (so a charge reads as a run)
 void DrawFirstPersonLegs(Camera3D cam, int moving, float phase)
@@ -520,6 +523,8 @@ void DrawFirstPersonLegs(Camera3D cam, int moving, float phase)
 
 void DrawRifleView(Camera3D cam, int type, float kick)
 {
+    // real embedded PBR small-arms for Mosin / AKM / bayonet; fists stay procedural
+    if(type<=2 && GunsNative_Ready()){ GunsNative_DrawView(cam,type,kick); return; }
     Vector3 f=vnorm(vsub(cam.target,cam.position));
     Vector3 r=vnorm(vcross(f,cam.up));
     Vector3 u=cam.up;
@@ -597,7 +602,55 @@ void DrawRifleView(Camera3D cam, int type, float kick)
         sMuzzle=vadd(grip, vmul(f,1.2f));
     }
 }
-Vector3 RifleMuzzle(Camera3D cam, int type){ (void)cam;(void)type; return sMuzzle; }
+Vector3 RifleMuzzle(Camera3D cam, int type)
+{
+    if(type<=2 && GunsNative_Ready()) return GunsNative_MuzzlePoint(cam,type);
+    (void)cam;(void)type; return sMuzzle;
+}
+
+// MK2-style fragmentation grenade: ovoid olive body with cast knurl ribs,
+// steel neck, striker lever (spoon) and pull ring. Drawn at unit size (~0.14 m).
+static void grenadeParts(Matrix M)
+{
+    // ovoid body
+    DrawPart(P_SPHERE,C_DARKOLIVE,M,MPart(v3(0,0,0),(Vector3){1,0,0},0,v3(0.115f,0.145f,0.115f)));
+    // cast fragmentation ribs: 6 vertical seams + 2 horizontal bands
+    for(int i=0;i<6;i++)
+    {
+        float a=i*(PI/3.0f);
+        Matrix R=MatrixMultiply(MPart(v3(0,0,0),(Vector3){0,1,0},a,v3(1,1,1)),M);
+        DrawPart(P_BOX,C_DARK,R,MPart(v3(0.116f,0,0),(Vector3){1,0,0},0,v3(0.012f,0.22f,0.02f)));
+    }
+    DrawPart(P_CYL,C_DARK,M,MPart(v3(0,0.05f,0),(Vector3){1,0,0},0,v3(0.118f,0.018f,0.118f)));
+    DrawPart(P_CYL,C_DARK,M,MPart(v3(0,-0.06f,0),(Vector3){1,0,0},0,v3(0.118f,0.018f,0.118f)));
+    // steel neck / fuse
+    DrawPart(P_CYL,C_STEEL,M,MPart(v3(0,0.165f,0),(Vector3){1,0,0},0,v3(0.05f,0.045f,0.05f)));
+    // striker lever (spoon) running down one side
+    DrawPart(P_BOX,C_STEEL,M,MPart(v3(0.04f,0.20f,0),(Vector3){0,0,1},0.25f,v3(0.018f,0.12f,0.05f)));
+    // pull ring (thin steel ring beside the lever)
+    DrawPart(P_CYL,C_STEEL,M,MPart(v3(0.0f,0.135f,0.072f),(Vector3){1,0,0},0,v3(0.032f,0.012f,0.032f)));
+}
+void DrawGrenadeModel(Vector3 pos, float spin)
+{
+    Matrix M=MatrixMultiply(MPart(v3(0,0,0),(Vector3){0,1,0},spin,v3(1,1,1)),
+                            MatrixTranslate(pos.x,pos.y,pos.z));
+    grenadeParts(M);
+}
+void DrawGrenadeView(Camera3D cam, float pull)
+{
+    Vector3 f=vnorm(vsub(cam.target,cam.position));
+    Vector3 r=vnorm(vcross(f,cam.up));
+    Vector3 u=cam.up;
+    // held chest-high; pull raises it into view as the pin is readied
+    Vector3 grip=vadd(cam.position,
+        vadd(vmul(f,0.46f+0.18f*pull),
+        vadd(vmul(r,0.04f), vmul(u,-0.16f+0.10f*pull))));
+    float yaw=atan2f(-f.x,-f.z), pitch=asinf(clampf(f.y,-1,1))+0.35f;
+    Quaternion q=QuaternionMultiply(QuaternionFromAxisAngle((Vector3){0,1,0},yaw),
+                                    QuaternionFromAxisAngle((Vector3){1,0,0},pitch));
+    Matrix M=MatrixMultiply(QuaternionToMatrix(q),MatrixTranslate(grip.x,grip.y,grip.z));
+    grenadeParts(M);
+}
 
 // ---------------------------------------------------------------- particles
 typedef struct { Vector3 p,v; float life,max,size,grow; int tex; Color col; int dead; } P;

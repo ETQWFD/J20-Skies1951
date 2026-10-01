@@ -3,6 +3,9 @@
 #include "noise.h"
 #include "coop.h"
 #include "bnet.h"
+#if defined(PLATFORM_ANDROID)
+#include <sys/system_properties.h>
+#endif
 
 GroundResult gGroundResult={0};
 
@@ -19,11 +22,36 @@ typedef struct {
     float    yaw, pitch, hp, fireCd, reload, reloadTake, lastSeen;
     int      weapon, mag[2], reserve[2];
     uint32_t lastSeq;
+    char     name[BN_NAME];
 } Avatar;
 static Avatar av[BNET_MAXPLY];          // index = player id (1..3)
 static BnWorld gSnap;                   // latest world snapshot (client)
 static int   gHaveSnap=0, gNetWin=0, gAvatarShots=0;
 static float gAnimClock=0;              // shared walk-cycle clock for rendering
+static char  gNetName[BN_NAME]={0};     // local player nick over the network
+static void ensureNetName(void)
+{
+    if(gNetName[0])return;
+    const char*s=NULL;
+#if defined(PLATFORM_ANDROID)
+    {
+        char model[64]={0};
+        if(__system_property_get("ro.product.manufacturer",model)>0 && model[0])
+        {
+            char full[80]={0};
+            char m2[64]={0};
+            if(__system_property_get("ro.product.model",m2)>0 && m2[0])
+                snprintf(full,sizeof full,"%s %s",model,m2);
+            else snprintf(full,sizeof full,"%s",model);
+            strncpy(gNetName,full,BN_NAME-1); gNetName[BN_NAME-1]=0; s=gNetName;
+        }
+    }
+#endif
+    if(!s||!s[0])s=getenv("USERNAME");
+    if(!s||!s[0])s=getenv("USER");
+    if(!s||!s[0])s="志愿军";
+    if(!gNetName[0]){ strncpy(gNetName,s,BN_NAME-1); gNetName[BN_NAME-1]=0; }
+}
 static int   avThreat(const Vector3*chest,Vector3*outPos);
 
 
@@ -228,9 +256,12 @@ static void spawnBattle(void)
     memset(blds,0,sizeof(blds));
     for(int i=0;i<NF;i++)
     {
-        float x=frand(-260,260), z=frand(-520,-300);
+        // defenders are dug in ON the objective ridge (three rings around OBJV),
+        // facing south toward the assault, so taking the hill actually clears it.
+        float aa=i*2.39996f; float rr=26.0f+(float)(i%3)*40.0f;
+        float x=OBJV.x+cosf(aa)*rr+frand(-8,8), z=OBJV.z+sinf(aa)*rr+frand(-8,8);
         foes[i].pos=(Vector3){x,0,z}; foes[i].pos.y=Terrain_Height(x,z);
-        foes[i].ang=frand(-0.4f,0.4f)+M_PI; foes[i].hp=100; foes[i].alive=1;
+        foes[i].ang=frand(-0.3f,0.3f); foes[i].hp=100; foes[i].alive=1;
         foes[i].fireCd=frand(0.5f,2.5f); foes[i].state=0; foes[i].cryT=0; foes[i].aware=0;
     }
     for(int i=0;i<NP;i++)
@@ -410,7 +441,9 @@ static void updateGrenade(float dt)
         gre.v.x*=0.62f; gre.v.z*=0.62f;
         if(fabsf(gre.v.y)<1.3f)gre.landed=1;
     }
-    if(gre.age>1.7f||(gre.landed&&gre.age>0.85f))explodeGrenade();
+    // fixed 2.5-second fuse from release (MK2-style timed grenade), independent
+    // of bounce/rest, so the player can cook it but it always pops at 2.5 s.
+    if(gre.age>=2.5f)explodeGrenade();
 }
 
 static float terrainRayT(Vector3 o,Vector3 d)
@@ -503,10 +536,20 @@ static void updateFoes(float dt)
         bool see = d<430 && los(chest,threat);
         if(see) m->state=1;
         Vector3 move={0};
-        if(m->state==0) // advance toward the line, then dig in
+        if(m->state==0) // dug in on the objective ridge: hold the ring, face the assault
         {
-            if(m->pos.z>-150){ move=flatFwd(0); move=vmul(move,7.0f); m->ang=angTo(m->pos,vadd(m->pos,move)); }
-            else m->state=2;
+            float aa=i*2.39996f; float rr=26.0f+(float)(i%3)*40.0f;
+            Vector3 anc=(Vector3){OBJV.x+cosf(aa)*rr,0,OBJV.z+sinf(aa)*rr};
+            float ad=vlen((Vector3){m->pos.x-anc.x,0,m->pos.z-anc.z});
+            if(ad>14.0f) move=vmul(vnorm(vsub(anc,m->pos)),6.0f);   // drift back into position
+            else
+            {
+                // watch toward the approaching player; skirmishers step south to make contact
+                float pd=vlen((Vector3){eye.x-m->pos.x,0,eye.z-m->pos.z});
+                if(pd>250.0f && (i%6)==(frame/120)%6) move=vmul(flatFwd(angTo(m->pos,eye)),6.5f);
+            }
+            float wantAng=angTo(m->pos,eye);
+            m->ang+=clampf(fAngDiff(wantAng,m->ang),-2.2f*dt,2.2f*dt);
         }
         else if(m->state==1)
         {
@@ -568,33 +611,45 @@ static void updatePals(float dt)
             if(d<bd){bd=d;tgt=j;}
         }
         Vector3 chest=(Vector3){m->pos.x,m->pos.y+1.5f,m->pos.z};
+        // squad assault line: spread across the player and keep pressing north
+        // toward the objective; the leader (i==0) stays a few steps ahead.
+        float lane=(i-(NP-1)*0.5f)*9.0f;
+        float leadZ=OBJV.z+30.0f + (i==0?-6.0f:0.0f);
+        Vector3 form=(Vector3){eye.x+lane,0,(eye.z-16.0f<leadZ)?eye.z-16.0f:leadZ};
+        Vector3 mv={0};
         if(tgt>=0)
         {
             Vector3 tc=(Vector3){foes[tgt].pos.x,foes[tgt].pos.y+1.4f,foes[tgt].pos.z};
-            m->ang=angTo(m->pos,tc);
-            // advance until in range, keep loose line with player
-            Vector3 want=(Vector3){(i-(NP-1)*0.5f)*12,0,eye.z-30};
-            Vector3 mv={0};
-            if(bd>170) mv=vmul(vnorm(vsub(tc,chest)),9.0f);
-            else if(m->pos.z>want.z) mv=vmul(flatFwd(m->ang),8.0f);
-            m->pos=vadd(m->pos,vmul(mv,dt)); m->pos.y=Terrain_Height(m->pos.x,m->pos.z);
-            // fire
-            m->fireCd-=dt;
-            if(bd<330 && m->fireCd<=0 && los(chest,tc))
+            float wantAng=angTo(m->pos,tc);
+            m->ang+=clampf(fAngDiff(wantAng,m->ang),-3.4f*dt,3.4f*dt);   // turn rate-limited
+            // charge to contact, then use the ground (short strafes) instead of bunching up
+            if(bd>118.0f) mv=vmul(flatFwd(m->ang),10.5f);
+            else
             {
-                m->fireCd=frand(0.5f,1.4f);
-                Vector3 aim=vadd(tc,v3(frand(-2,2),frand(-2,2),frand(-2,2)));
+                Vector3 side=(Vector3){cosf(m->ang),0,sinf(m->ang)};
+                mv=vmul(side, sinf(timeAlive*1.7f+i*1.3f)*3.2f);
+                // keep roughly on the assault line so the squad doesn't clump on the player
+                Vector3 toForm=vsub(form,m->pos); toForm.y=0;
+                if(vlen(toForm)>10.0f) mv=vadd(mv,vmul(vnorm(toForm),4.5f));
+            }
+            m->pos=vadd(m->pos,vmul(mv,dt)); m->pos.y=Terrain_Height(m->pos.x,m->pos.z);
+            // aimed fire once they can actually see the ridge line
+            m->fireCd-=dt;
+            if(bd<400 && m->fireCd<=0 && los(chest,tc))
+            {
+                m->fireCd=frand(0.45f,1.15f);
+                Vector3 aim=vadd(tc,v3(frand(-1.6f,1.6f),frand(-1.6f,1.6f),frand(-1.6f,1.6f)));
                 FX_Tracer(chest,aim,(Color){255,235,170,255},0.06f);
-                if(frand(0,1)<0.12f){ foes[tgt].hp-=34; if(foes[tgt].hp<=0)killFoe(tgt,0,"战友击毙美军士兵"); }
-                if(frand(0,1)<0.12f){ m->cryT=1.8f; m->cry=irand(0,4); }
+                if(frand(0,1)<0.22f){ foes[tgt].hp-=36; if(foes[tgt].hp<=0)killFoe(tgt,0,"战友击毙美军士兵"); }
+                if(frand(0,1)<0.10f){ m->cryT=1.8f; m->cry=irand(0,4); }
             }
         }
         else
         {
-            Vector3 want=(Vector3){eye.x+(i-(NP-1)*0.5f)*10,0,eye.z-24};
-            Vector3 mv=vnorm(vsub(want,m->pos)); mv.y=0;
-            m->pos=vadd(m->pos,vmul(mv,8*dt)); m->pos.y=Terrain_Height(m->pos.x,m->pos.z);
-            m->ang=angTo(m->pos,want);
+            Vector3 mv2=vsub(form,m->pos); mv2.y=0;
+            if(vlen(mv2)>1.5f) mv=vmul(vnorm(mv2),9.5f);
+            m->pos=vadd(m->pos,vmul(mv,dt)); m->pos.y=Terrain_Height(m->pos.x,m->pos.z);
+            m->ang+=clampf(fAngDiff(angTo(m->pos,form),m->ang),-3.4f*dt,3.4f*dt);
         }
         if(m->cryT>0)m->cryT-=dt;
     }
@@ -632,7 +687,10 @@ static void updatePlayer(float dt)
         // release to lob; the dotted parabola is drawn in the 3D pass.
         if(grenades>0&&!gre.on)
         {
-            if(IsKeyDown(KEY_M)||Touch_GreHeld()){greCharging=1;greHold+=dt/1.15f;if(greHold>1)greHold=1;}
+            // cancel a readied throw: left on-screen 取消 key (phone) or X (desktop).
+            // The grenade is NOT consumed, so a mis-tap can be safely aborted.
+            if(greCharging && (Touch_GreCancelPressed()||IsKeyPressed(KEY_X))){ greCharging=0; greHold=0; }
+            else if(IsKeyDown(KEY_M)||Touch_GreHeld()){greCharging=1;greHold+=dt/1.15f;if(greHold>1)greHold=1;}
             else if(greCharging){ float pw=greHold; greCharging=0;greHold=0; throwGrenade(pw<0.12f?0.45f:pw); }
         }
         else { greCharging=0;greHold=0; }
@@ -757,33 +815,55 @@ static void updatePlayer(float dt)
     hp=clampf(hp,0,100);
     if(hitMark>0)hitMark-=dt;
     // 右键机瞄/狙击镜（仅桌面鼠标；触屏无右键）
-    // AKM 才能开镜（全镜）；莫辛-纳甘是贴腮机瞄，只给很轻的收窄，不出高倍镜
+    // 莫辛/98k：完整狙击镜（黑幕留圆窗）；AKM：内红点式开镜
     float adsWant=0.0f;
     if(!gSelfTest && (adsMouseHold||Touch_ADSHeld()))
-        adsWant=(weapon==1)?1.0f:(weapon==0?0.32f:0.0f);
+        adsWant=(weapon==0||weapon==1)?1.0f:0.0f;
     ads+=(adsWant-ads)*(1.0f-powf(0.0001f,dt));
     if(ads<0.001f)ads=0.0f; if(ads>0.999f)ads=1.0f;
 }
 
 static void drawScope(void)
 {
-    // AKM 才开镜：干净的十字分划 + 轻微暗角（不再用大圆镜筒密位）。
-    // 莫辛-纳甘是贴腮机械瞄准，屏幕不出任何镜层，只保留屏心准星。
-    if(ads<=0.02f||weapon!=1) return;
+    if(ads<=0.02f) return;
     int sw=GetScreenWidth(), sh=GetScreenHeight();
     int cx=sw/2, cy=sh/2;
-    unsigned char a=(unsigned char)(225*ads);
-    Color ret=(Color){12,12,14,a};
-    // 轻微四周压暗，突出视野中心
-    Color vg=(Color){0,0,0,(unsigned char)(90*ads)};
-    DrawRectangle(0,0,sw,70,vg); DrawRectangle(0,sh-70,sw,70,vg);
-    // 十字分划（中心留口）
-    int gap=7, L=150;
-    DrawLine(cx-L,cy,cx-gap,cy,ret); DrawLine(cx+gap,cy,cx+L,cy,ret);
-    DrawLine(cx,cy-L,cx,cy-gap,ret); DrawLine(cx,cy+gap,cx,cy+L,ret);
-    DrawCircleLines(cx,cy,2.0f,ret);
-    // 横向高度刻点
-    for(int i=1;i<=4;i++){int x=i*26; DrawLine(cx-x,cy-4,cx-x,cy+4,ret); DrawLine(cx+x,cy-4,cx+x,cy+4,ret);}
+    unsigned char a=(unsigned char)(235*ads);
+    if(weapon==0)
+    {
+        // ---- 莫辛-纳甘 / 98k 狙击镜：黑色幕布遮四周，只留中央圆形镜窗 ----
+        float R=sh*0.30f;
+        Color black=(Color){0,0,0,a};
+        // thick annulus masks everything outside the circular lens
+        DrawRing((Vector2){(float)cx,(float)cy},R,sh*1.6f,0,360,96,black);
+        // steel lens rim
+        DrawRingLines((Vector2){(float)cx,(float)cy},R,R+2.0f,0,360,96,(Color){20,20,22,a});
+        DrawRingLines((Vector2){(float)cx,(float)cy},R-3.0f,R-2.0f,0,360,96,(Color){60,60,66,(unsigned char)(150*ads)});
+        // subtle in-lens vignette ring
+        DrawRingLines((Vector2){(float)cx,(float)cy},R*0.62f,R*0.62f+1,0,360,96,(Color){0,0,0,(unsigned char)(40*ads)});
+        // crosshair (fine black reticle) stopping short of the dot
+        Color ret=(Color){8,8,10,a};
+        int gap=5, L=(int)(R*0.92f);
+        DrawLine(cx-L,cy,cx-gap,cy,ret); DrawLine(cx+gap,cy,cx+L,cy,ret);
+        DrawLine(cx,cy-L,cx,cy-gap,ret); DrawLine(cx,cy+gap,cx,cy+L,ret);
+        // mil-dot ticks
+        for(int i=1;i<=4;i++){int x=(int)(i*R*0.2f); DrawLine(cx-x,cy-3,cx-x,cy+3,ret); DrawLine(cx+x,cy-3,cx+x,cy+3,ret);}
+        for(int i=1;i<=3;i++){int y=(int)(i*R*0.2f); DrawLine(cx-3,cy-y,cx+3,cy-y,ret); DrawLine(cx-3,cy+y,cx+3,cy+y,ret);}
+        // central solid black dot
+        DrawCircleV((Vector2){(float)cx,(float)cy},3.0f,ret);
+    }
+    else if(weapon==1)
+    {
+        // ---- AKM：内红点 / 全息式开镜，干净十字分划 + 上下轻压暗 ----
+        Color ret=(Color){12,12,14,a};
+        Color vg=(Color){0,0,0,(unsigned char)(90*ads)};
+        DrawRectangle(0,0,sw,70,vg); DrawRectangle(0,sh-70,sw,70,vg);
+        int gap=7, L=150;
+        DrawLine(cx-L,cy,cx-gap,cy,ret); DrawLine(cx+gap,cy,cx+L,cy,ret);
+        DrawLine(cx,cy-L,cx,cy-gap,ret); DrawLine(cx,cy+gap,cx,cy+L,ret);
+        DrawCircleV((Vector2){(float)cx,(float)cy},2.0f,ret);
+        for(int i=1;i<=4;i++){int x=i*26; DrawLine(cx-x,cy-4,cx-x,cy+4,ret); DrawLine(cx+x,cy-4,cx+x,cy+4,ret);}
+    }
 }
 
 static float wrap180(float a){ while(a>180.0f)a-=360.0f; while(a<-180.0f)a+=360.0f; return a; }
@@ -964,6 +1044,7 @@ static void avatarSpawn(Avatar*a)
     a->vel=v3(0,0,0); a->yaw=0; a->pitch=-0.05f; a->hp=100;
     a->fireCd=0; a->reload=0; a->reloadTake=0; a->lastSeen=0; a->weapon=0;
     a->mag[0]=5; a->mag[1]=30; a->reserve[0]=0; a->reserve[1]=70; a->lastSeq=0;
+    strncpy(a->name,"志愿军",BN_NAME-1); a->name[BN_NAME-1]=0;
 }
 
 // hitscan for a remote client's avatar (host resolves all damage)
@@ -1071,6 +1152,8 @@ static void netHostRecv(float dt)
         Avatar*a=&av[id];
         if(!a->active){ avatarSpawn(a); a->addr=from; }
         a->addr=from; a->lastSeen=0;
+        { int has=0; for(int ni=0;ni<BN_NAME;ni++) if(in.name[ni]){has=1;break;}
+          if(has){ memcpy(a->name,in.name,BN_NAME); a->name[BN_NAME-1]=0; } }
         if(in.seq<=a->lastSeq)continue; a->lastSeq=in.seq;
         // edge events handled immediately
         if((in.bits&BN_B_JUMP)&&a->jumps==0&&a->alive){ a->vel.y=7.2f; a->jumps=1; }
@@ -1085,14 +1168,20 @@ static void netHostRecv(float dt)
 
 static void netHostSend(int win)
 {
+    ensureNetName();
     BnWorld w; memset(&w,0,sizeof w);
     w.scenario=(uint8_t)gScenario; w.win=(uint8_t)win; w.planted=(uint8_t)planted;
     w.foeN=NF; w.palN=NP;
     int pn=0;
-    w.players[pn++]=(BnPlayer){0,eye.x,eye.y,eye.z,(int16_t)(yaw*1000),(int8_t)hp,1,(uint8_t)weapon};
+    BnPlayer p0={0,eye.x,eye.y,eye.z,(int16_t)(yaw*1000),(int8_t)hp,1,(uint8_t)weapon,{0}};
+    memcpy(p0.name,gNetName,BN_NAME); w.players[pn++]=p0;
     for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active)
-        w.players[pn++]=(BnPlayer){(uint8_t)id,av[id].pos.x,av[id].pos.y,av[id].pos.z,
-            (int16_t)(av[id].yaw*1000),(int8_t)av[id].hp,(uint8_t)(av[id].alive?1:0),(uint8_t)av[id].weapon};
+    {
+        BnPlayer pv={(uint8_t)id,av[id].pos.x,av[id].pos.y,av[id].pos.z,
+            (int16_t)(av[id].yaw*1000),(int8_t)av[id].hp,(uint8_t)(av[id].alive?1:0),(uint8_t)av[id].weapon,{0}};
+        memcpy(pv.name,av[id].name,BN_NAME);
+        w.players[pn++]=pv;
+    }
     w.plyN=(uint8_t)pn; w.foesAlive=(int16_t)foesAlive(); w.palsAlive=(int16_t)palsAlive();
     for(int i=0;i<NF;i++) w.foes[i]=(BnSoldier){foes[i].pos.x,foes[i].pos.z,(int16_t)(foes[i].ang*1000),
         (int8_t)foes[i].hp,(uint8_t)(foes[i].alive?1:(foes[i].state==9?2:0))};
@@ -1111,9 +1200,11 @@ static void netHostSend(int win)
 // ---- client side ----
 static void netClientSend(void)
 {
+    ensureNetName();
     BnInput in; memset(&in,0,sizeof in);
     in.id=(uint8_t)gCoopId;
     in.yaw=yaw; in.pitch=pitch; in.weapon=(uint8_t)weapon;
+    memcpy(in.name,gNetName,BN_NAME);
     // derive a -100..100 move vector from the same controls as updatePlayer
     Vector3 f=flatFwd(yaw), r=(Vector3){cosf(yaw),0,sinf(yaw)};
     Vector3 wish={0};
@@ -1186,6 +1277,47 @@ static void netClientRecv(void)
     }
 }
 
+// real co-op players' floating nicks (screen-space), distinct from AI squaddies
+static void drawNetNames(void)
+{
+    Vector3 fwd=vnorm(vsub(cam.target,cam.position));
+    int role=gCoopRole, have=gHaveSnap;
+    for(int slot=0; slot<BNET_MAXPLY; slot++)
+    {
+        int id; int alive; Vector3 eye; const char*nm;
+        char tmp[BN_NAME];
+        if(role==1)
+        {
+            if(slot==0)continue;                       // host never labels itself
+            Avatar*a=&av[slot]; if(!a->active)continue;
+            id=slot; alive=a->alive; eye=a->pos; nm=a->name;
+        }
+        else if(role==2 && have)
+        {
+            BnPlayer*p=&gSnap.players[slot];
+            if(slot>=gSnap.plyN)continue;
+            if(p->id==(uint8_t)gCoopId)continue;
+            id=p->id; alive=(p->state==1); eye=(Vector3){p->x,p->y,p->z};
+            memcpy(tmp,p->name,BN_NAME); tmp[BN_NAME-1]=0; nm=tmp;
+            if(p->id==0&&!tmp[0])continue;
+        }
+        else continue;
+        if(!alive)continue;
+        Vector3 head=(Vector3){eye.x,eye.y+0.55f,eye.z};
+        Vector3 to=vsub(head,cam.position);
+        if(vdot(to,fwd)<=0||vlen(to)>120.0f)continue;
+        Vector2 s=GetWorldToScreen(head,cam);
+        if(s.x<10||s.x>GetScreenWidth()-10||s.y<10||s.y>GetScreenHeight()-10)continue;
+        char shown[BN_NAME+1]; strncpy(shown,nm,BN_NAME); shown[BN_NAME]=0;
+        if(!shown[0])strcpy(shown,"战友");
+        int fs=15; Vector2 sz=MeasureTextEx(GameFont(),shown,fs,0);
+        int x=(int)(s.x-sz.x/2), y=(int)(s.y-6);
+        DrawRectangle(x-3,y-1,(int)sz.x+6,(int)sz.y+2,(Color){0,0,0,150});
+        DrawTextEx(GameFont(),shown,(Vector2){x,y},fs,0,(Color){120,220,255,255});
+        (void)id;
+    }
+}
+
 // draw the other real players (host: joined clients; client: host + peers)
 static void drawNetBodies(void)
 {
@@ -1193,8 +1325,10 @@ static void drawNetBodies(void)
     {
         for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active)
         {
-            if(av[id].alive) DrawSoldier(av[id].pos,-av[id].yaw,0,1.0f,1,gAnimClock*9.0f+id*1.7f);
-            else DrawSoldierDown(av[id].pos,av[id].yaw,0,1.0f);
+            // av.pos.y is EYE height (ground + 1.68); DrawSoldier expects feet.
+            Vector3 bp={av[id].pos.x,av[id].pos.y-1.68f,av[id].pos.z};
+            if(av[id].alive) DrawSoldier(bp,-av[id].yaw,0,1.0f,1,gAnimClock*9.0f+id*1.7f);
+            else DrawSoldierDown(bp,av[id].yaw,0,1.0f);
         }
     }
     else if(gCoopRole==2 && gHaveSnap)
@@ -1507,6 +1641,7 @@ void Ground_Run(int *outMode,int *outEnding)
         Weapon_AnimUpdate(dt);
         Touch_SetPaused(paused);
         Touch_Update(1);
+        Touch_SetGrenadeArmed(greCharging);   // reveal left cancel key only while a throw is readied
         if(IsKeyPressed(KEY_ESCAPE)){ EnableCursor(); *outMode=0; return; }
         if(IsKeyPressed(KEY_ESCAPE)){ EnableCursor(); *outMode=0; return; }
         int wantPause = (!gSelfTest && (Touch_PausePressed()||IsKeyPressed(KEY_P)));
@@ -1578,7 +1713,7 @@ void Ground_Run(int *outMode,int *outEnding)
         if(gShake>0.01f)   // shell shock camera shake
         { float s=gShake*0.55f; Vector3 sh=v3(frand(-s,s),frand(-s,s),frand(-s,s));
           cam.position=vadd(cam.position,sh); cam.target=vadd(cam.target,sh); }
-        { float fovTarget=(weapon==1)?40.0f:60.0f;   // AKM 开镜收窄到 40°；莫辛贴腮机瞄仅轻微收窄到 ~68°
+        { float fovTarget=(weapon==0)?18.0f:40.0f;   // 莫辛/98k 狙击镜放大到18°；AKM 内红点收窄到40°
           cam.fovy=72.0f-ads*(72.0f-fovTarget); }
         // hide the first-person gun when something is right in front of the
         // muzzle (steep ground / wall / a soldier) so it can't clip through.
@@ -1639,7 +1774,7 @@ void Ground_Run(int *outMode,int *outEnding)
         for(int i=0;i<NP;i++)if(pals[i].alive){ DrawBlobShadow(pals[i].pos,1.05f); DrawSoldier(pals[i].pos,-pals[i].ang,0,1.0f,1,timeAlive*9.0f+i*1.3f); }
         drawNetBodies();   // other real co-op players
         // grenade in flight + charging arc preview
-        if(gre.on) DrawPart(P_SPHERE,C_DARK,MatrixIdentity(),MPart(gre.p,(Vector3){1,0,0},0,(Vector3){0.2f,0.24f,0.2f}));
+        if(gre.on) DrawGrenadeModel(gre.p,gre.age*10.0f);
         if(greCharging)
         {
             Vector3 d2=aimDir();
@@ -1653,16 +1788,25 @@ void Ground_Run(int *outMode,int *outEnding)
             }
         }
         FX_Draw3D(cam);
+        if(gSelfTest && gCoopRole==0 && frame>=148)
+        {
+            weapon = (frame<200)?1:(frame<260?2:0);   // deterministic view-model calibration
+            ads=0.0f; gunOccluded=0; greCharging=0;    // force a clean view-model capture
+        }
         if(!gInTank)
         {
             float hsp2=pvel.x*pvel.x+pvel.z*pvel.z; int moving=(hsp2>1.0f && jumps==0);
             DrawFirstPersonLegs(cam,moving,timeAlive*9.0f);
         }
-        if(!gInTank && ads<0.5f && !gunOccluded) DrawRifleView(cam,weapon,gunKick);  // 瞄准/贴墙时隐去枪
+        if(!gInTank && ads<0.5f && !gunOccluded)
+        {
+            if(greCharging) DrawGrenadeView(cam,greHold);
+            else DrawRifleView(cam,weapon,gunKick);
+        }
         EndMode3D();
         if(paused) Touch_DrawPauseMenu();
         else {
-            drawHud(); drawKillFeed(); drawScope(); Touch_DrawHUD(); drawTalk();
+            drawHud(); drawKillFeed(); drawScope(); drawNetNames(); Touch_DrawHUD(); drawTalk();
             if(gInTank) CNC("坦克：W/S 行驶 · A/D 转向 · 鼠标/火 开炮 · F / “话”下车",
                 GetScreenWidth()/2,GetScreenHeight()-26,16,(Color){255,230,170,235});
             else if(!gTank.alive && gCoopRole!=2)
@@ -1671,16 +1815,20 @@ void Ground_Run(int *outMode,int *outEnding)
                 GetScreenWidth()/2,GetScreenHeight()-58,17,(Color){255,220,150,255}); }
         }
         EndDrawing();
-        if(gSelfTest && frame==260) TakeScreenshot(TextFormat("%s/shot_ground.png",gShotDir));
+        if(gSelfTest && gCoopRole==0){
+            if(frame==150) TakeScreenshot(TextFormat("%s/shot_akm.png",gShotDir));
+            if(frame==200) TakeScreenshot(TextFormat("%s/shot_knife.png",gShotDir));
+            if(frame==260) TakeScreenshot(TextFormat("%s/shot_ground.png",gShotDir));
+        }
         if(gFlagTest && frame==150) TakeScreenshot(TextFormat("%s/shot_flag.png",gShotDir));
 
         // win / lose (frozen while paused / in dialogue)
         if(!paused&&!talkOpen)
         {
         float dz=eye.z-OBJV.z, dx=eye.x-OBJV.x;
-        bool nearObj=(dx*dx+dz*dz)<70*70;
+        bool nearObj=(dx*dx+dz*dz)<80.0f*80.0f;
         if(gCoopRole==1) for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active&&av[id].alive)
-        { float ax=av[id].pos.x-OBJV.x, az=av[id].pos.z-OBJV.z; if(ax*ax+az*az<70*70) nearObj=true; }
+        { float ax=av[id].pos.x-OBJV.x, az=av[id].pos.z-OBJV.z; if(ax*ax+az*az<80.0f*80.0f) nearObj=true; }
         int fa=foesAlive();
         // client: victory is declared by the host snapshot
         if(gCoopRole==2 && gHaveSnap && gNetWin==1 && celebrate<=0)
@@ -1688,8 +1836,10 @@ void Ground_Run(int *outMode,int *outEnding)
         if(hp<=0){ endId=(foesKilled>=5||(eye.z< -250))?(Map_IsChosin()?206:203):(Map_IsChosin()?206:204); break; }
         if(gCoopRole!=2 && celebrate<=0)
         {
-            if(nearObj && fa<=3) holdT+=dt; else holdT=0;
-            if((fa==0 && nearObj) || holdT>=5)
+            // Take the hill: stand on the objective with the garrison broken
+            // (annihilated, or routed to a remnant <=12) and hold it 4.5 s.
+            if(nearObj && fa<=12) holdT+=dt; else holdT=0;
+            if((fa==0 && nearObj) || holdT>=4.5f)
             {
                 celebrate=3.4f;
                 if(pals[0].alive) planter=0;                       // squad leader first

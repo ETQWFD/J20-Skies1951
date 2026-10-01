@@ -200,8 +200,94 @@ void Sea_Draw(Camera3D cam)
     EndBlendMode();
 }
 
+// ---- battlefield ground cover: dry reeds / scorched grass / snow tufts ----
+// Crossed blade cards instanced in a disc that follows the camera. Anchored to
+// WORLD cells (not the camera), so tufts stay put while walking and only the
+// visible set is built (cache rebuilt on crossing a cell / changing map).
+extern Shader gLit;
+#define GR_MAX 2400
+static Mesh     gBlade={0};
+static Material gBladeMat={0};
+static Matrix   gGrassXf[GR_MAX];
+static int      gGrassN=0, gGrassReady=0;
+static int      gCellX=1<<30, gCellZ=1<<30, gCellSc=-1;
+
+static Mesh makeBladeMesh(void)
+{
+    const float w=0.09f, h=0.62f;
+    Mesh m={0}; m.vertexCount=8; m.triangleCount=4;
+    m.vertices=(float*)MemAlloc(sizeof(float)*24);
+    m.normals =(float*)MemAlloc(sizeof(float)*24);
+    m.texcoords=(float*)MemAlloc(sizeof(float)*16);
+    m.indices =(unsigned short*)MemAlloc(sizeof(unsigned short)*12);
+    // quad A runs along X, quad B along Z -> an X seen from any azimuth
+    float V[8*3]={ -w,0,0,  w,0,0,  w,h,0,  -w,h,0,
+                    0,0,-w, 0,0,w,  0,h,w,   0,h,-w };
+    memcpy(m.vertices,V,sizeof(V));
+    for(int i=0;i<4;i++){ m.normals[i*3]=0;m.normals[i*3+1]=0.35f;m.normals[i*3+2]=0.94f; }
+    for(int i=4;i<8;i++){ m.normals[i*3]=0.94f;m.normals[i*3+1]=0.35f;m.normals[i*3+2]=0; }
+    float UV[16]={0,0, 1,0, 1,1, 0,1, 0,0, 1,0, 1,1, 0,1};
+    memcpy(m.texcoords,UV,sizeof(UV));
+    unsigned short I[12]={0,1,2,0,2,3, 4,5,6,4,6,7};
+    memcpy(m.indices,I,sizeof(I));
+    UploadMesh(&m,false);
+    return m;
+}
+static unsigned int grHash(int x,int z){ unsigned int h=(unsigned int)(x*73856093) ^ (unsigned int)(z*19349663); h^=h>>13; h*=1274126177u; h^=h>>16; return h; }
+static float h01(unsigned int h){ return (h>>8)*(1.0f/16777216.0f); }
+
+static void grassRebuild(float px, float pz)
+{
+    const float STEP=2.6f; const int RCELL=20;
+    int cx=(int)floorf(px/STEP), cz=(int)floorf(pz/STEP);
+    gCellX=cx; gCellZ=cz; gCellSc=gScenario; gGrassN=0;
+    int snow=Map_IsSnow();
+    for(int iz=-RCELL; iz<=RCELL && gGrassN<GR_MAX; iz++)
+    for(int ix=-RCELL; ix<=RCELL && gGrassN<GR_MAX; ix++)
+    {
+        int wx=cx+ix, wz=cz+iz;
+        unsigned int h1=grHash(wx,wz);
+        if(h01(h1) < 0.30f) continue;                 // leave bare patches / mud
+        float jx=(h01(h1^0x9e37u)-0.5f)*STEP;
+        float jz=(h01(h1^0x85ebu)-0.5f)*STEP;
+        float X=(wx*STEP)+jx, Z=(wz*STEP)+jz;
+        if(X<-WORLD_HALF+4||X>WORLD_HALF-4||Z<-WORLD_HALF+4||Z>WORLD_HALF-4) continue;
+        float dx=X-px, dz=Z-pz; if(dx*dx+dz*dz > (RCELL*STEP)*(RCELL*STEP)) continue;
+        float Y=Terrain_Height(X,Z);
+        if(Y<=SEA_Y+1.2f) continue;                  // no reeds under water
+        Vector3 n=Terrain_Normal(X,Z);
+        if(n.y<0.62f) continue;                      // skip steep rock faces
+        float yaw=h01(h1^0x1234u)*6.2832f;
+        float sy=(snow?0.55f:0.8f)+h01(h1^0x5678u)*(snow?0.7f:0.9f);
+        float sx=0.85f+h01(h1^0x9abcu)*0.3f;
+        Matrix m=MatrixMultiply(
+                   MatrixMultiply(MatrixRotateY(yaw),MatrixScale(sx,sy,sx)),
+                   MatrixTranslate(X,Y-0.02f,Z));
+        gGrassXf[gGrassN++]=m;
+    }
+    (void)snow;
+}
+
+void Grass_Draw(Camera3D cam)
+{
+    if(!gGrassReady)
+    {
+        gBlade=makeBladeMesh();
+        gBladeMat=LoadMaterialDefault();
+        gGrassReady=1;
+    }
+    if(gLit.id>0) gBladeMat.shader=gLit;   // gLit is recreated each Scene_Load
+    gBladeMat.maps[MATERIAL_MAP_DIFFUSE].color =
+        Map_IsSnow() ? (Color){158,148,112,255}      // dry reeds through snow
+                     : (Color){96,110,58,255};        // scorched olive grass
+    const float STEP=2.6f;
+    int cx=(int)floorf(cam.position.x/STEP), cz=(int)floorf(cam.position.z/STEP);
+    if(cx!=gCellX||cz!=gCellZ||gScenario!=gCellSc) grassRebuild(cam.position.x,cam.position.z);
+    if(gGrassN>0) DrawMeshInstanced(gBlade,gBladeMat,gGrassXf,gGrassN);
+}
+
 void Terrain_Draw(Camera3D cam)
 {
-    (void)cam;
     if (gTerrainReady) DrawModel(gTerrain, (Vector3){0,0,0}, 1.0f, WHITE);
+    Grass_Draw(cam);
 }

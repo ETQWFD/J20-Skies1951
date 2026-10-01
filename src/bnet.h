@@ -9,6 +9,7 @@
 #define BNET_NF     40     // must match ground.c NF
 #define BNET_NP     12     // must match ground.c NP
 #define BNET_MAXPLY 4      // host id 0 + clients id 1..3
+#define BN_NAME 12         // fixed-width display nick carried per player
 
 // client -> host: this frame's intent
 #pragma pack(push,1)
@@ -20,6 +21,7 @@ typedef struct {
     int8_t   ax, ay;      // move stick -100..100 (strafe, forward)
     uint8_t  bits;        // see BN_B_*
     uint8_t  weapon;      // 0..3
+    char     name[BN_NAME]; // display nick (device model on phone, username on PC)
 } BnInput;
 #pragma pack(pop)
 #define BN_B_FIRE    1
@@ -32,7 +34,7 @@ typedef struct {
 
 #pragma pack(push,1)
 typedef struct { float x,z; int16_t angC; int8_t hp; uint8_t state; } BnSoldier; // state:1 alive,2 down
-typedef struct { uint8_t id; float x,y,z; int16_t yawC; int8_t hp; uint8_t state; uint8_t weapon; } BnPlayer;
+typedef struct { uint8_t id; float x,y,z; int16_t yawC; int8_t hp; uint8_t state; uint8_t weapon; char name[BN_NAME]; } BnPlayer;
 typedef struct {
     uint8_t magic[3];     // 'S','K','W'
     uint8_t flags;        // bit0 started

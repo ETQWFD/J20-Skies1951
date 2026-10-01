@@ -88,6 +88,8 @@ void   DrawFirstPersonLegs(Camera3D cam, int moving, float phase);
 void   Weapon_SwingTick(void);           // start a blade/fist swing animation
 void   Weapon_AnimUpdate(float dt);
 Vector3 RifleMuzzle(Camera3D cam, int type);
+void   DrawGrenadeModel(Vector3 pos, float spin);
+void   DrawGrenadeView(Camera3D cam, float pull);
 
 // particle / tracer fx
 void FX_Init(void);
@@ -170,6 +172,8 @@ int   Touch_TalkPressed(void);          // interact with wounded comrade
 int   Touch_GrePressed(void);           // throw grenade (ground)
 int   Touch_GreHeld(void);              // 雷 button held (charge)
 int   Touch_GreReleased(void);          // 雷 button release edge
+int   Touch_GreCancelPressed(void);     // left-side cancel-throw key (only while charging)
+void  Touch_SetGrenadeArmed(int armed); // show/hide the cancel-throw key
 int   Touch_PauseTap(float*x,float*y);  // fresh tap while pause overlay is up
 int   Touch_PauseMenuSelect(void);     // pause overlay: 1 resume, 2 quit
 void  Touch_DrawPauseMenu(void);

@@ -22,6 +22,7 @@ int Bn_EncodeInput(char*out,const BnInput*in)
     f=in->pitch; memcpy(p,&f,4); p+=4;
     w8(&p,(uint8_t)in->ax); w8(&p,(uint8_t)in->ay);
     w8(&p,in->bits); w8(&p,in->weapon);
+    for(int i=0;i<BN_NAME;i++) w8(&p,(uint8_t)in->name[i]);
     return (int)(p-out);
 }
 int Bn_DecodeInput(const char*buf,int n,BnInput*out)
@@ -34,6 +35,7 @@ int Bn_DecodeInput(const char*buf,int n,BnInput*out)
     memcpy(&out->pitch,p,4); p+=4;
     out->ax=(int8_t)r8(&p); out->ay=(int8_t)r8(&p);
     out->bits=r8(&p); out->weapon=r8(&p);
+    for(int i=0;i<BN_NAME;i++) out->name[i]=(char)r8(&p);
     return out->id>=1 && out->id<BNET_MAXPLY;
 }
 
@@ -54,12 +56,15 @@ static void putPlayer(char**p,const BnPlayer*s)
     w8(p,s->id);
     float f; f=s->x;memcpy(*p,&f,4);*p+=4; f=s->y;memcpy(*p,&f,4);*p+=4; f=s->z;memcpy(*p,&f,4);*p+=4;
     w16(p,s->yawC); w8(p,(uint8_t)s->hp); w8(p,s->state); w8(p,s->weapon);
+    for(int i=0;i<BN_NAME;i++) w8(p,(uint8_t)s->name[i]);
 }
 static BnPlayer getPlayer(const char**p)
 {
     BnPlayer s; s.id=r8(p);
     memcpy(&s.x,*p,4);*p+=4; memcpy(&s.y,*p,4);*p+=4; memcpy(&s.z,*p,4);*p+=4;
-    s.yawC=r16(p); s.hp=(int8_t)r8(p); s.state=r8(p); s.weapon=r8(p); return s;
+    s.yawC=r16(p); s.hp=(int8_t)r8(p); s.state=r8(p); s.weapon=r8(p);
+    for(int i=0;i<BN_NAME;i++) s.name[i]=(char)r8(p);
+    return s;
 }
 
 int Bn_EncodeWorld(char*out,int cap,const BnWorld*in)
@@ -78,7 +83,7 @@ int Bn_EncodeWorld(char*out,int cap,const BnWorld*in)
 }
 int Bn_DecodeWorld(const char*buf,int n,BnWorld*out)
 {
-    int need=4+4+2+ BNET_NF*(4+4+2+1+1)+ BNET_NP*(4+4+2+1+1)+ BNET_MAXPLY*(1+12+2+1+1+1);
+    int need=4+4+2+ BNET_NF*(4+4+2+1+1)+ BNET_NP*(4+4+2+1+1)+ BNET_MAXPLY*(1+12+2+1+1+1+BN_NAME);
     if(n<need || buf[0]!='S'||buf[1]!='K'||buf[2]!='W')return 0;
     const char*p=buf+3;
     out->flags=r8(&p);out->scenario=r8(&p);out->win=r8(&p);out->planted=r8(&p);
