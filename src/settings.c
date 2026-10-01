@@ -48,6 +48,17 @@ static const Ph PH[]={
  {"history", {"操作说明 / 历史","Controls / History","操作 / 歴史","Управление / История"}},
  {"settings",{"设置","Settings","設定","Настройки"}},
  {"motto",   {"铭记历史 · 珍爱和平 · 吾辈自强","Remember history · Cherish peace · Strive on","歴史を忘れず · 平和を尊び · 自強せよ","Помнить историю · беречь мир · крепнуть"}},
+ {"subtitle",{"J-20 SKIES OVER KOREA · 抗美援朝二十七大战役 · 重返战场","J-20 SKIES OVER KOREA · 27 Korean-War Campaigns · Back to Battlefield","J-20 SKIES OVER KOREA · 朝鮮戦線27大作戦","J-20 SKIES OVER KOREA · 27 кампаний · Назад в бой"}},
+ {"choose",  {"点选 / 触屏点选或按 1~0、-、= 选择 · ESC 退出","Tap/click a card, or press 1~0,-,= · ESC to quit","カードをタップ/クリック、または 1~0,-,= キー · ESC で終了","Нажмите карту или клавиши 1~0,-,= · ESC — выход"}},
+ {"airTitle",{"长空 · 1951","Skies · 1951","長空 · 1951","Небо · 1951"}},
+ {"fps60",{"60 帧","60 FPS","60 FPS","60 кадр/с"}},
+ {"fps120",{"120 帧","120 FPS","120 FPS","120 кадр/с"}},
+ {"fps480",{"480 / 不封顶","480 / uncapped","480 / 上限なし","480 / без лимита"}},
+ {"q0",{"流畅","Smooth","スムーズ","Плавно"}},
+ {"q1",{"经典","Classic","クラシック","Классика"}},
+ {"q2",{"高清","HD","高画質","Высокое"}},
+ {"q3",{"真实","Realistic","リアル","Реализм"}},
+ {"histShort",{"操作说明 / 历史","Controls / History","操作 / 歴史","Управление/История"}},
  {"latest",  {"当前安装版本","Installed version","現在のバージョン","Установлена версия"}},
  {"site",    {"最新版与下载见官网","Latest build & downloads:","最新版・入手先：","Свежая сборка:"}},
 };
@@ -61,6 +72,8 @@ const char* tr(const char* key)
 static const char* FPSN[3]={"60 帧","120 帧","480 / 不封顶"};
 static const char* QN[4]={"流畅","经典","高清","真实"};
 static const char* LN[4]={"中文","English","日本語","Русский"};
+static const char* fpsName(int i){ static const char*k[3]={"fps60","fps120","fps480"}; return tr(k[i]); }
+static const char* qName(int i){ static const char*k[4]={"q0","q1","q2","q3"}; return tr(k[i]); }
 
 static bool sbtn(const char*s,int cx,int y,int w,int h)
 {
@@ -92,6 +105,7 @@ void Settings_Screen(void)
     while(!WindowShouldClose())
     {
         float dt=GetFrameTime(); (void)dt;
+        Touch_UIBegin();   // one fresh-tap snapshot shared by every arrow/button
         BeginDrawing();
         DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){10,14,22,240});
         int cx=GetScreenWidth()/2;
@@ -107,8 +121,8 @@ void Settings_Screen(void)
             CNC((valstr),cx+190,y+13,20,(Color){255,240,200,255}); \
             if(arrow(cx+330,y,"+")){ idx=(idx+1)%(max); Settings_Apply(); Settings_Save(); } \
             y+=72; }while(0)
-        ROW(tr("fps"),FPSN[gSetFPS],gSetFPS,3);
-        ROW(tr("quality"),QN[gSetQuality],gSetQuality,4);
+        ROW(tr("fps"),fpsName(gSetFPS),gSetFPS,3);
+        ROW(tr("quality"),qName(gSetQuality),gSetQuality,4);
         ROW(tr("lang"),LN[gSetLang],gSetLang,4);
         #undef ROW
 

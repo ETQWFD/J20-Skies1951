@@ -237,17 +237,40 @@ int Touch_PauseTap(float*x,float*y)
     *x=s_menuX; *y=s_menuY; return 1;
 }
 
-// Self-contained fresh-finger tap for full-screen menus (main menu / lobby),
-// independent of Touch_Update(). Coordinates are screen pixels.
+// Full-screen menu tap, independent of Touch_Update(). Coordinates are pixels.
+//
+// IMPORTANT: the old implementation "consumed" the press inside Touch_UITap,
+// so whichever button called it FIRST in a frame swallowed the tap and every
+// other button saw nothing — on a phone this showed up as "buttons need two
+// taps" and "tapping one item opens a different one". We now sample exactly
+// ONCE per frame in Touch_UIBegin() and every Touch_UITap() only READS that
+// snapshot, so all buttons in a frame hit-test the same fresh tap; because a
+// tap is a single point, it activates at most the one rectangle it lands in.
 static int s_uiPrevN=0;
-int Touch_UITap(float*x,float*y)
+static int s_uiTap=0, s_uiMouse=0;
+static float s_uiX=0, s_uiY=0;
+
+void Touch_UIBegin(void)
 {
     int n=GetTouchPointCount();
-    int hit=(n>s_uiPrevN);
-    if(hit){ int idx=s_uiPrevN<MAXT?s_uiPrevN:0; Vector2 tp=GetTouchPosition(idx);
-             if(tp.x>=0){ *x=tp.x; *y=tp.y; } else hit=0; }
+    s_uiTap=(n>s_uiPrevN);
+    if(s_uiTap)
+    {
+        int idx=s_uiPrevN<MAXT?s_uiPrevN:0;
+        Vector2 tp=GetTouchPosition(idx);
+        if(tp.x>=0){ s_uiX=tp.x; s_uiY=tp.y; } else s_uiTap=0;
+    }
     s_uiPrevN=n;
-    return hit;
+    s_uiMouse=IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    if(s_uiMouse){ s_uiX=(float)GetMouseX(); s_uiY=(float)GetMouseY(); }
+}
+
+int Touch_UITap(float*x,float*y)
+{
+    // read-only snapshot: safe to call from any number of buttons per frame
+    if(!s_uiTap && !s_uiMouse) return 0;
+    *x=s_uiX; *y=s_uiY;
+    return 1;
 }
 
 // returns 1 = resume, 2 = quit to menu; hit-tests the fresh tap or a mouse click
@@ -385,6 +408,7 @@ void Touch_SetMountLive(int a){ (void)a; }
 void Touch_SetGrenadeArmed(int a){ (void)a; }
 int Touch_PauseTap(float*x,float*y){ (void)x;(void)y; return 0; }
 int Touch_UITap(float*x,float*y){ (void)x;(void)y; return 0; }
+void Touch_UIBegin(void){}
 void Touch_SetPaused(int p){ (void)p; }
 int Touch_PauseMenuSelect(void){ return 0; }
 void Touch_DrawPauseMenu(void){}

@@ -257,6 +257,7 @@ static int menuLoop(int *go)
     {
         float dt=GetFrameTime(); frame++; FX_Update(dt); Env_Update(dt);
         if(guard>0)guard-=dt;
+        Touch_UIBegin();   // one fresh-tap snapshot for ALL buttons this frame
         Vector2 m=GetMousePosition();
         float txp=0,typ=0; int tapped=(guard<=0 && Touch_UITap(&txp,&typ));
         int mousePressed=(guard<=0 && IsMouseButtonPressed(MOUSE_BUTTON_LEFT));
@@ -271,10 +272,10 @@ static int menuLoop(int *go)
         DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){6,10,18,120});
         int SW=GetScreenWidth();
         CNC("长 空 · 1951",SW/2,40,46,(Color){255,232,150,255});
-        CNC("J-20 SKIES OVER KOREA · 抗美援朝二十七大战役 · 重返战场",SW/2,92,18,(Color){225,230,240,235});
+        CNC(tr("subtitle"),SW/2,92,18,(Color){225,230,240,235});
 
         // ---- top row: air war / LAN coop / settings / history & controls ----
-        const char* topN[4]={"① 空战 · 驾驶歼-20","⑨ 联机作战","⑪ 设置","⑩ 操作说明 / 历史"};
+        const char* topN[4]={tr("air"),tr("coop"),tr("settings"),tr("histShort")};
         int topTo[4]={ST_AIR,-2,ST_SETTINGS,ST_HELP};
         float topW=268, topGap=18, topY=112, topH=42;
         float topX0=SW/2.0f-(4*topW+3*topGap)/2.0f;
@@ -328,8 +329,8 @@ static int menuLoop(int *go)
         }
         #undef M_HIT
         #undef M_PRESS
-        CNC("铭记历史 · 珍爱和平 · 吾辈自强",SW/2,GetScreenHeight()-46,18,(Color){255,225,180,220});
-        CNC("点击 / 触屏点选或按 1~0、-、= 选择 · ESC 退出",SW/2,GetScreenHeight()-22,15,(Color){210,215,225,210});
+        CNC(tr("motto"),SW/2,GetScreenHeight()-46,18,(Color){255,225,180,220});
+        CNC(tr("choose"),SW/2,GetScreenHeight()-22,15,(Color){210,215,225,210});
         EndDrawing();
         if(sel>=0){ if(sel==ST_AIR||sel==ST_GROUND){ Terrain_Init(); Terrain_ApplyShader(gLit); } *go=sel;return sel; }
         if(gSelfTest){ TakeScreenshot(TextFormat("%s/shot_menu.png",gShotDir)); *go=ST_AIR; return ST_AIR; }
@@ -339,10 +340,11 @@ static int menuLoop(int *go)
 
 int main(int argc,char**argv)
 {
-    int devLobby=0, devCoop=0, devBattle=0;
+    int devLobby=0, devCoop=0, devBattle=0, devLang=-1;
     for(int i=1;i<argc;i++)
     {
         if(strcmp(argv[i],"--selftest")==0) gSelfTest=1;
+        else if(strcmp(argv[i],"--lang")==0 && i+1<argc){ devLang=atoi(argv[++i]); } // dev: force UI language 0..3
         else if(strcmp(argv[i],"--lobby")==0){ gSelfTest=1; devLobby=1; } // dev: screenshot LAN lobby
         else if(strcmp(argv[i],"--coophost")==0){ devCoop=1; }
         else if(strcmp(argv[i],"--coopclient")==0){ devCoop=2; }
@@ -358,6 +360,7 @@ int main(int argc,char**argv)
     SetConfigFlags(FLAG_MSAA_4X_HINT|FLAG_WINDOW_RESIZABLE);
     InitWindow(1280,720,APP_TITLE);
     Settings_Load();
+    if(devLang>=0 && devLang<=3) gSetLang=devLang;   // dev/QA: force UI language
     Settings_Apply();   // user frame-rate cap + grass density, persisted
     rlSetClipPlanes(0.1f,9000.0f);
     SetExitKey(0); // we manage ESC ourselves
@@ -452,8 +455,10 @@ int main(int argc,char**argv)
         {
             int f=0;
             while(!WindowShouldClose()){
+                Touch_UIBegin();
+                float hx=0,hy=0; int htap=Touch_UITap(&hx,&hy);
                 BeginDrawing(); drawHelp(); EndDrawing(); f++;
-                if(IsKeyPressed(KEY_SPACE)||IsKeyPressed(KEY_ESCAPE)||IsKeyPressed(KEY_ENTER)||IsMouseButtonPressed(0))break;
+                if(IsKeyPressed(KEY_SPACE)||IsKeyPressed(KEY_ESCAPE)||IsKeyPressed(KEY_ENTER)||IsMouseButtonPressed(0)||htap)break;
                 if(gSelfTest && f==20){ TakeScreenshot(TextFormat("%s/shot_help.png",gShotDir)); break; }
             }
             state=ST_MENU;
@@ -480,13 +485,15 @@ int main(int argc,char**argv)
         else if(state==ST_END)
         {
             endFrames++;
+            Touch_UIBegin();
+            float ex=0,ey=0; int etap=(endFrames>24 && Touch_UITap(&ex,&ey));
             BeginDrawing();
             DrawEnding(endMode,endId,endMode==1,endMode==1?(void*)&gAirResult:(void*)&gGroundResult);
             EndDrawing();
             if(gSelfTest && endFrames==18)
                 TakeScreenshot(TextFormat("%s/shot_%s.png",gShotDir,endMode==1?"endair":"endground"));
             if(gSelfTest && endFrames>42){ state=(pending>=0)?pending:ST_MENU; }
-            else if(!gSelfTest && (IsKeyPressed(KEY_SPACE)||IsKeyPressed(KEY_ENTER)||IsMouseButtonPressed(0)))
+            else if(!gSelfTest && (IsKeyPressed(KEY_SPACE)||IsKeyPressed(KEY_ENTER)||IsMouseButtonPressed(0)||etap))
                 state=ST_MENU;
         }
     }

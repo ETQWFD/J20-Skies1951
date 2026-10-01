@@ -9,15 +9,27 @@ cps = set(range(0x20, 0x7F))
 # a few symbols we rely on even if scanner misses them
 for ch in "·—…、：；？！，。“”‘’《》①②③④⑤⑥⑦⑧⑨⑩←→↑↓√×／":
     cps.add(ord(ch))
+# whole blocks so Japanese / Russian UI text always renders, even if a phrase is
+# added later without re-running a font build.
+#   Cyrillic (Russian)   U+0400..U+04FF
+#   Hiragana/Katakana    U+3040..U+30FF (+ phonetic ext U+31F0..U+31FF)
+cps.update(range(0x0400, 0x0500))
+cps.update(range(0x3040, 0x3100))
+cps.update(range(0x31F0, 0x3200))
+
+def keep(o):
+    return (o >= 0x4E00 or 0x3000 <= o <= 0x303F or 0xFF00 <= o <= 0xFFEF
+            or 0x0400 <= o <= 0x04FF or 0x3040 <= o <= 0x30FF or 0x31F0 <= o <= 0x31FF)
 
 for f in glob.glob(os.path.join(ROOT, "src", "*.c")) + glob.glob(os.path.join(ROOT, "src", "*.h")):
     with open(f, encoding="utf-8") as fh:
         for ch in fh.read():
             o = ord(ch)
-            if o >= 0x4E00 or 0x3000 <= o <= 0x303F or 0xFF00 <= o <= 0xFFEF:
+            if keep(o):
                 cps.add(o)
 
-cps = sorted(cps)
+cps = sorted(c for c in cps if c not in
+             (0x3040,0x3097,0x3098,0x309F,0x30A0,0x30FF) and not (0x31F0 <= c <= 0x31FF))
 os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
 with open(os.path.join(ROOT, "build", "unicodes.txt"), "w", encoding="utf-8") as f:
     f.write("U+0020-007E\n")

@@ -31,6 +31,7 @@
 #if defined(_WIN32)
   #include <winsock2.h>
   #include <ws2tcpip.h>
+  #include <windows.h>
   #pragma comment(lib,"ws2_32.lib")
   typedef int socklen_t;
   #define KA_CLOSE closesocket
@@ -147,6 +148,12 @@ int main(int argc,char**argv)
     unsigned short listenPort=24463;
     if(argc>=2){ int v=atoi(argv[1]); if(v>0&&v<=65535)listenPort=(unsigned short)v; }
 
+#if defined(_WIN32)
+    // Chinese log text is UTF-8 in the binary; a default cmd/GBK code page renders
+    // it as mojibake. Switch both consoles to UTF-8 before printing anything.
+    SetConsoleOutputCP(65001);
+    SetConsoleCP(65001);
+#endif
 #if defined(_WIN32)
     WSADATA w; if(WSAStartup(MAKEWORD(2,2),&w)!=0){ printf("WSAStartup 失败\n"); return 1; }
 #endif

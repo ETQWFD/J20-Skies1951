@@ -150,22 +150,20 @@ static void panelTitle(const char*s,int y)
 { DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){10,14,22,235});
   CNC(s,GetScreenWidth()/2,y,34,(Color){255,226,150,255}); }
 
-// ONE fresh touch per frame is snapshotted here and shared by every button, so
-// several on-screen buttons in the same frame no longer steal the tap (old bug:
-// only the first button could ever be tapped on a phone -> "need double taps").
+// ONE fresh touch per frame is snapshotted in Touch_UIBegin() and shared by
+// every button, so several on-screen buttons in the same frame no longer steal
+// the tap (old bug: only the first button could be tapped -> "need two taps",
+// and tapping one item could open a different one).
 static int   gTap=0; static float gTapX=0,gTapY=0;
 static void  tapBegin(void)
 {
-    static int pn=0; int n=GetTouchPointCount();
-    gTap=(n>pn);
-    if(gTap){ Vector2 t=GetTouchPosition(pn<n?pn:0); gTapX=t.x; gTapY=t.y; }
-    pn=n;
+    float tx=0,ty=0;
+    Touch_UIBegin();
+    gTap=Touch_UITap(&tx,&ty); gTapX=tx; gTapY=ty;
 }
 static bool rectTap(Rectangle r)
 {
-    bool mouse = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(),r);
-    bool touch = gTap && CheckCollisionPointRec((Vector2){gTapX,gTapY},r);
-    return mouse||touch;
+    return gTap && CheckCollisionPointRec((Vector2){gTapX,gTapY},r);
 }
 
 static bool btn(const char*s,int cx,int y,int w,int h)

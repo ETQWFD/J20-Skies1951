@@ -196,6 +196,7 @@ int  Map_IsScorch(void);
 int  Map_IsDusk(void);
 int  Map_IsChosin(void);
 int  Touch_UITap(float*x,float*y);        // fresh finger landed this frame (pixels), for modal/menu UI
+void Touch_UIBegin(void);                 // call ONCE per menu frame, BEFORE hit-testing buttons
 
 // self test
 extern int gSelfTest;
