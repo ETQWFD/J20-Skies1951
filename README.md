@@ -128,3 +128,5 @@ pyftsubset /usr/share/fonts/truetype/wqy/wqy-microhei.ttc --font-number=0 \
   依赖均为系统库），但本环境无安卓真机/模拟器，未能做真机画面回归；如遇兼容问题可反馈机型。
 
 铭记历史 · 珍爱和平 · 吾辈自强。
+
+https://release-assets.githubusercontent.com/github-production-release-asset/1388407941/3d474517-a194-41c1-884f-32c2897dbb0f?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-10-01T06%3A28%3A33Z&rscd=attachment%3B+filename%3DJ20_Skies1951.apk&rsct=application%2Fvnd.android.package-archive&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-10-01T05%3A27%3A44Z&ske=2026-10-01T06%3A28%3A33Z&sks=b&skv=2018-11-09&sig=6WumdWNNnfD%2B2R01PD2bUI7jIFrkwJ7le0Ip3OebevI%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc5MDgzMjc2NSwibmJmIjoxNzkwODMyNDY1LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.NS5RLmj6P6DV7UdPBHn9t4-WqEvdE-Ijq56t0noRvWg&response-content-disposition=attachment%3B%20filename%3DJ20_Skies1951.apk&response-content-type=application%2Fvnd.android.package-archive
