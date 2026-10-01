@@ -38,6 +38,7 @@ void  Net_SetRelayAddr(const NetAddr* a);        // pre-resolved endpoint
 void  Net_ClearRelay(void);
 int   Net_HasRelay(void);
 void  Net_RelayTick(float dt);                  // call each frame; emits SKR
+void  Net_RelayPing(void);                     // send one raw SKR now (RTT probe)
 int   Net_ParseRelayAddr(const char* text, NetAddr* out); // "1.2.3.4:55191"
 
 #endif

@@ -39,6 +39,15 @@ static void peerTouch(const NetAddr*a,int id)
 void Coop_HostPoll(float dt)
 {
     peersRefresh(dt);
+    // PUSH announcement once a second: lets clients discover us even when their
+    // limited broadcast never reaches this host (common on phone hotspots) and
+    // also rides the relay (dst=broadcast) for cross-net discovery.
+    static float sAnn=0.0f; sAnn-=dt;
+    if(sAnn<=0.0f)
+    {   sAnn=1.0f;
+        char ann[120]; int k=snprintf(ann,sizeof ann,"SKH|%d|%d|%d",gCoopScenario,sPeerN,NET_PORT);
+        Net_Broadcast(ann,k);
+    }
     NetAddr f; char b[200]; int n;
     while((n=Net_Poll(&f,b,sizeof b-1))>0)
     {
@@ -228,7 +237,7 @@ static void srvPing(float dt)
     srvApplyActive();
     Net_RelayTick(dt);
     s->sentT-=dt;
-    if(s->sentT<=0){ s->sentT=1.0f; Net_Broadcast("SKR",3); s->lastSeen=-GetTime(); }
+    if(s->sentT<=0){ s->sentT=1.0f; Net_RelayPing(); s->lastSeen=-GetTime(); }
     NetAddr f; char b[64]; int n;
     while((n=Net_Poll(&f,b,sizeof(b)-1))>0)
     {

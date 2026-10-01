@@ -1137,6 +1137,14 @@ static void netHostInit(void)
 static void netHostRecv(float dt)
 {
     for(int id=1;id<BNET_MAXPLY;id++) if(av[id].active) av[id].lastSeen+=dt;
+    // keep advertising the running room once a second (LAN + relay) so friends can
+    // find/join even after the relay entry would otherwise have expired.
+    static float sBattleAnn=0.0f; sBattleAnn-=dt;
+    if(sBattleAnn<=0.0f)
+    {   sBattleAnn=1.0f;
+        char r[64]; int k=snprintf(r,sizeof r,"SKH|%d|%d",gScenario,0);
+        Net_Broadcast(r,k);
+    }
     NetAddr from; char buf[NET_MAXPKT]; int n;
     while((n=Net_Poll(&from,buf,sizeof buf))>0)
     {

@@ -407,8 +407,20 @@ int Touch_MountPressed(void){ return 0; }
 void Touch_SetMountLive(int a){ (void)a; }
 void Touch_SetGrenadeArmed(int a){ (void)a; }
 int Touch_PauseTap(float*x,float*y){ (void)x;(void)y; return 0; }
-int Touch_UITap(float*x,float*y){ (void)x;(void)y; return 0; }
-void Touch_UIBegin(void){}
+// Desktop UI still goes through the SAME per-frame snapshot as touch, so lobby
+// menus (coop.c rectTap) are clickable with a real mouse. Touch_UIBegin() runs
+// once per frame and samples the left-button edge; Touch_UITap() only reads it.
+static int s_deskTap=0; static float s_deskX=0.0f,s_deskY=0.0f;
+int Touch_UITap(float*x,float*y)
+{
+    if(!s_deskTap) return 0;
+    if(x)*x=s_deskX; if(y)*y=s_deskY; return 1;
+}
+void Touch_UIBegin(void)
+{
+    s_deskTap=IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    if(s_deskTap){ s_deskX=(float)GetMouseX(); s_deskY=(float)GetMouseY(); }
+}
 void Touch_SetPaused(int p){ (void)p; }
 int Touch_PauseMenuSelect(void){ return 0; }
 void Touch_DrawPauseMenu(void){}
