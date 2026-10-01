@@ -15,16 +15,17 @@ typedef struct {
 
 static int   s_mode=0;
 static int   s_greHeld=0, s_greRel=0;   // grenade charge hold/release
+static int   s_mountLive=0;            // near/in a drivable vehicle -> show 车 button
 static float s_axisX=0, s_axisY=0;
 static float s_lookDX=0, s_lookDY=0;
-static Btn   bFire,bAct,bB,bSw,bAds,bPause,bTalk,bGre,bCan;
+static Btn   bFire,bAct,bB,bSw,bAds,bPause,bTalk,bGre,bCan,bMount;
 static int   s_greArmed=0;        // a grenade is being charged -> show cancel key
 static float sW,sH;
 
 static int inside(float x,float y,Btn*b){ float dx=x-b->bx,dy=y-b->by; return dx*dx+dy*dy<=b->br*b->br; }
 static int insideRect(float x,float y,float x0,float y0,float w,float h){ return x>=x0&&x<=x0+w&&y>=y0&&y<=y0+h; }
 
-static int latchAct=0,latchB=0,latchSw=0,latchPause=0,latchTalk=0,latchGre=0,latchCan=0;
+static int latchAct=0,latchB=0,latchSw=0,latchPause=0,latchTalk=0,latchGre=0,latchCan=0,latchMount=0;
 static int started=0;
 static int s_lastN=0;            // touch count at end of previous frame
 static int s_menuTap=0;          // a NEW finger landed this frame (modal UI taps)
@@ -36,7 +37,7 @@ void Touch_SetPaused(int p){ s_modal=p; }
 // look), so sliding off a button or lifting-and-tapping can never suddenly
 // swing the camera, and one tap can't trigger two different controls.
 enum { ROLE_NONE=0, ROLE_STICK, ROLE_LOOK,
-       ROLE_FIRE, ROLE_ACT, ROLE_B, ROLE_SW, ROLE_ADS, ROLE_TALK, ROLE_GRE, ROLE_GRECANCEL, ROLE_PAUSE };
+       ROLE_FIRE, ROLE_ACT, ROLE_B, ROLE_SW, ROLE_ADS, ROLE_TALK, ROLE_GRE, ROLE_GRECANCEL, ROLE_MOUNT, ROLE_PAUSE };
 static int   s_role[MAXT];
 static float s_lx[MAXT], s_ly[MAXT];
 static float s_supp=0;           // seconds to swallow every touch (UI handoff)
@@ -66,8 +67,9 @@ void Touch_Update(int mode)
         latchTalk = bTalk.held && !bTalk.prev;
         latchGre  = bGre.held  && !bGre.prev;
         latchCan  = bCan.held  && !bCan.prev;
+        latchMount= bMount.held&& !bMount.prev;
     } else { started=1; }
-    bAct.prev=bAct.held; bB.prev=bB.held; bSw.prev=bSw.held; bPause.prev=bPause.held; bTalk.prev=bTalk.held; bGre.prev=bGre.held; bCan.prev=bCan.held;
+    bAct.prev=bAct.held; bB.prev=bB.held; bSw.prev=bSw.held; bPause.prev=bPause.held; bTalk.prev=bTalk.held; bGre.prev=bGre.held; bCan.prev=bCan.held; bMount.prev=bMount.held;
 
     // 2) (re)place geometry without destroying held/prev
     bFire.bx=0.86f*sW; bFire.by=0.74f*sH; bFire.br=0.105f*sH; bFire.label="火";
@@ -77,6 +79,7 @@ void Touch_Update(int mode)
     bAds.bx =0.72f*sW;  bAds.by=0.51f*sH; bAds.br=0.062f*sH; bAds.label="镜";
     bTalk.bx=0.585f*sW; bTalk.by=0.85f*sH; bTalk.br=0.058f*sH; bTalk.label="话";
     bGre.bx =0.585f*sW; bGre.by =0.70f*sH; bGre.br =0.058f*sH; bGre.label="雷";
+    bMount.bx=0.585f*sW; bMount.by=0.56f*sH; bMount.br=0.058f*sH; bMount.label="车";
     // cancel-throw key lives on the LEFT by the stick and is only live while a
     // grenade is being charged (kept hidden the rest of the time).
     bCan.bx =0.34f*sW;  bCan.by =0.86f*sH; bCan.br =0.062f*sH; bCan.label="取消";
@@ -95,7 +98,7 @@ void Touch_Update(int mode)
     }
 
     // 3) reset this frame's classification (fire re-classified each frame too)
-    bFire.held=0; bAct.held=0; bB.held=0; bSw.held=0; bAds.held=0; bPause.held=0; bTalk.held=0; bGre.held=0; bCan.held=0;
+    bFire.held=0; bAct.held=0; bB.held=0; bSw.held=0; bAds.held=0; bPause.held=0; bTalk.held=0; bGre.held=0; bCan.held=0; bMount.held=0;
     if(s_modal){ bFire.held=0; s_axisX=0; s_axisY=0; s_lookDX=0; s_lookDY=0;
         // while paused every landing finger is a pure tap; strip in-game roles
         for(int k=0;k<nNow&&k<MAXT;k++)
@@ -133,6 +136,7 @@ void Touch_Update(int mode)
             else if(inside(x,y,&bB))        s_role[k]=ROLE_B;
             else if(inside(x,y,&bAds))      s_role[k]=ROLE_ADS;
             else if(inside(x,y,&bSw))       s_role[k]=ROLE_SW;
+            else if(mode==1 && s_mountLive && inside(x,y,&bMount)) s_role[k]=ROLE_MOUNT;
             else if(mode==1 && inside(x,y,&bTalk)) s_role[k]=ROLE_TALK;
             else if(mode==1 && inside(x,y,&bGre))  s_role[k]=ROLE_GRE;
             else                            s_role[k]=ROLE_LOOK;
@@ -178,6 +182,7 @@ void Touch_Update(int mode)
                 }
                 break;
             case ROLE_SW:   bSw.held=1;   break;
+            case ROLE_MOUNT: if(mode==1) bMount.held=1; break;
             case ROLE_TALK: if(mode==1) bTalk.held=1; break;
             case ROLE_GRE:  if(mode==1) bGre.held=1;  break;
             case ROLE_GRECANCEL: bCan.held=1; break;
@@ -220,6 +225,8 @@ int   Touch_GrePressed(void){ return latchGre; }
 int   Touch_GreHeld(void){ return s_greHeld; }
 int   Touch_GreReleased(void){ return s_greRel; }
 int   Touch_GreCancelPressed(void){ return latchCan; }
+int   Touch_MountPressed(void){ return latchMount; }
+void  Touch_SetMountLive(int a){ s_mountLive=a; }
 void  Touch_SetGrenadeArmed(int a){ s_greArmed=a; }
 int   Touch_IsTouch(void){ return 1; }
 
@@ -325,6 +332,17 @@ void Touch_DrawHUD(void)
         Vector2 szg=MeasureTextEx(GameFont(),"雷",(float)fsg,0);
         DrawTextEx(GameFont(),"雷",(Vector2){bGre.bx-szg.x*0.5f,bGre.by-szg.y*0.5f},
                    (float)fsg,0,(Color){255,200,160,220});
+        // dedicated vehicle mount/dismount button: only near/in a drivable wreck
+        if(s_mountLive)
+        {
+            Color mfill=(Color){90,150,210,150}, mring=(Color){170,215,255,235};
+            DrawCircleV((Vector2){bMount.bx,bMount.by},bMount.br,mfill);
+            DrawCircleLinesV((Vector2){bMount.bx,bMount.by},bMount.br,mring);
+            int fsm=(int)(bMount.br*0.8f);
+            Vector2 szm=MeasureTextEx(GameFont(),"车",(float)fsm,0);
+            DrawTextEx(GameFont(),"车",(Vector2){bMount.bx-szm.x*0.5f,bMount.by-szm.y*0.5f},
+                       (float)fsm,0,(Color){255,255,255,235});
+        }
         // cancel-throw key: only appears while a grenade is being readied
         if(s_greArmed)
         {
@@ -362,6 +380,8 @@ int Touch_GrePressed(void){ return 0; }
 int Touch_GreHeld(void){ return 0; }
 int Touch_GreReleased(void){ return 0; }
 int Touch_GreCancelPressed(void){ return 0; }
+int Touch_MountPressed(void){ return 0; }
+void Touch_SetMountLive(int a){ (void)a; }
 void Touch_SetGrenadeArmed(int a){ (void)a; }
 int Touch_PauseTap(float*x,float*y){ (void)x;(void)y; return 0; }
 int Touch_UITap(float*x,float*y){ (void)x;(void)y; return 0; }

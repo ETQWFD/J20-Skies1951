@@ -28,4 +28,16 @@ void  Net_Send(const NetAddr*to,const char*buf,int len);
 void  Net_Broadcast(const char*buf,int len);     // send to 255.255.255.255:NETPORT
 int   Net_AddrEq(const NetAddr*a,const NetAddr*b);
 
+// ---- optional public relay (frp/tunnel) support ---------------------------
+// When a relay is set, discovery/keepalive is also sent to the relay's public
+// UDP endpoint; a standalone Kanye relay fans every game packet out to all
+// other registered players, so hosts/clients behind different NATs can play
+// without being on the same LAN. Endpoints register via "SKR" heartbeats.
+void  Net_SetRelay(const char* ip, int port);   // dotted text + host-order port
+void  Net_SetRelayAddr(const NetAddr* a);        // pre-resolved endpoint
+void  Net_ClearRelay(void);
+int   Net_HasRelay(void);
+void  Net_RelayTick(float dt);                  // call each frame; emits SKR
+int   Net_ParseRelayAddr(const char* text, NetAddr* out); // "1.2.3.4:55191"
+
 #endif

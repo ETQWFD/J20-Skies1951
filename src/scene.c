@@ -523,10 +523,11 @@ void DrawFirstPersonLegs(Camera3D cam, int moving, float phase)
     }
 }
 
-void DrawRifleView(Camera3D cam, int type, float kick)
+void DrawRifleView(Camera3D cam, int type, float kick, float reload01)
 {
     // real embedded PBR small-arms for Mosin / AKM / bayonet; fists stay procedural
-    if(type<=2 && GunsNative_Ready()){ GunsNative_DrawView(cam,type,kick); return; }
+    if(type<=2 && GunsNative_Ready()){ GunsNative_DrawView(cam,type,kick,reload01); return; }
+    (void)reload01;
     Vector3 f=vnorm(vsub(cam.target,cam.position));
     Vector3 r=vnorm(vcross(f,cam.up));
     Vector3 u=cam.up;

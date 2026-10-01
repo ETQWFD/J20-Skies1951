@@ -61,6 +61,7 @@ Vector3 Terrain_Normal(float x, float z);
 void   Terrain_Draw(Camera3D cam);
 void   Grass_Init(void);
 void   Grass_Unload(void);
+void   Grass_SetDensity(float d);
 void   Sea_Draw(Camera3D cam);
 extern Model gTerrain;
 extern int   gTerrainReady;
@@ -85,7 +86,7 @@ void   DrawVehicle(Vector3 pos, float yaw, int kind, float scale);
 void   DrawBlobShadow(Vector3 feet, float radius);
 void   DrawMissile(Vector3 pos, Quaternion q);
 void   DrawBomb(Vector3 pos, Quaternion q);
-void   DrawRifleView(Camera3D cam, int type, float kick);
+void   DrawRifleView(Camera3D cam, int type, float kick, float reload01);
 void   DrawFirstPersonLegs(Camera3D cam, int moving, float phase);
 void   Weapon_SwingTick(void);           // start a blade/fist swing animation
 void   Weapon_AnimUpdate(float dt);
@@ -148,6 +149,8 @@ typedef struct {
     int endingId;
 } GroundResult;
 void Ground_Run(int *outMode, int *outEnding);
+int  Ground_VehiclePrompt(void);
+int  Ground_InVehicle(void);
 
 void DrawEnding(int mode, int endingId, int fromAir, void* res);
 void DrawHistoryScreen(void);
@@ -171,6 +174,8 @@ int   Touch_SwitchPressed(void);       // ground weapon switch
 int   Touch_PausePressed(void);        // on-screen pause/back
 int   Touch_ADSHeld(void);             // ground aim-down-sights (hold)
 int   Touch_TalkPressed(void);          // interact with wounded comrade
+int   Touch_MountPressed(void);         // dedicated 车 button (mount/dismount)
+void  Touch_SetMountLive(int live);     // show 车 button only near/in a vehicle
 int   Touch_GrePressed(void);           // throw grenade (ground)
 int   Touch_GreHeld(void);              // 雷 button held (charge)
 int   Touch_GreReleased(void);          // 雷 button release edge

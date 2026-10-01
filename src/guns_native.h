@@ -8,7 +8,7 @@ void GunsNative_Unload(void);
 int  GunsNative_Ready(void);
 
 // first-person held weapon. type: 0 Mosin/98k, 1 AKM, 2 bayonet
-void GunsNative_DrawView(Camera3D cam, int type, float kick);
+void GunsNative_DrawView(Camera3D cam, int type, float kick, float reload01);
 Vector3 GunsNative_Muzzle(void);
 Vector3 GunsNative_MuzzlePoint(Camera3D cam, int type);
 void Weapon_SwingTickNative(void);

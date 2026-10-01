@@ -95,6 +95,8 @@ static float meleeCd=0, meleeSwing=0;        // broadsword / fists
 static int   grenades=1;                     // one grenade each man carries
 typedef struct { Vector3 p,v; int on,landed; float age; } Gre;
 static Gre gre={0}; static int greCharging=0; static float greHold=0;
+static float greCd=0;     // 误触取消后 1 秒内不能再次蓄力手雷（M 键 / 雷 键共用）
+static float greArmCd=0.0f;   // 1 s lockout after a cancelled throw (anti mis-tap)
 static float stepAcc=0, ambT=0;              // footsteps / distant battle
 static float celebrate=0; static int planter=-1, planted=0, bugled=0; static float objFall=0; // victory flag ceremony
 static float hitMark, dmgCd, holdT, timeAlive;
@@ -671,7 +673,7 @@ static void updatePlayer(float dt)
         int fireMouse=IsMouseButtonDown(MOUSE_BUTTON_LEFT);
         int adsMouse=IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
 #endif
-        float lookMul=1.0f-ads*0.30f;             // 开镜后降低灵敏度（对齐网页版手感 ×0.7），更稳更跟手
+        float lookMul=1.0f-ads*0.12f;             // 开镜后仅轻微降灵敏度，跟手更快（旧版×0.7 偏肉）
         yaw+=mdx*0.0026f*lookMul; pitch-=mdy*0.0026f*lookMul;   // 鼠标右移→视角右转
         pitch=clampf(pitch,-1.5f,1.5f);
         if(IsKeyPressed(KEY_ONE))weapon=0;
@@ -681,15 +683,17 @@ static void updatePlayer(float dt)
         if(Touch_SwitchPressed())weapon=(weapon+1)%4;
         if(IsKeyPressed(KEY_R)||Touch_BPressed())reloadWeapon();
         if(IsKeyPressed(KEY_F))tankToggleMount();
-        if(Touch_TalkPressed())tankToggleMount();
+        if(Touch_MountPressed())tankToggleMount();   // dedicated on-screen 车 button
         if(fireMouse||Touch_FireHeld()){ if(gInTank){ /* cannon handled in warUpdate */ } else if(weapon>=2)melee(); else shoot(); }
         // grenade: hold M (desktop) or HOLD the 雷 button (phone) to charge,
         // release to lob; the dotted parabola is drawn in the 3D pass.
         if(grenades>0&&!gre.on)
         {
+            if(greCd>0) greCd-=dt;   // cooldown ticking: neither charge nor throw
             // cancel a readied throw: left on-screen 取消 key (phone) or X (desktop).
-            // The grenade is NOT consumed, so a mis-tap can be safely aborted.
-            if(greCharging && (Touch_GreCancelPressed()||IsKeyPressed(KEY_X))){ greCharging=0; greHold=0; }
+            // The grenade is NOT consumed; a 1 s cooldown then blocks re-arming so a
+            // stray tap on 雷 / M right after cancelling can't instantly re-ready it.
+            else if(greCharging && (Touch_GreCancelPressed()||IsKeyPressed(KEY_X))){ greCharging=0; greHold=0; greCd=1.0f; }
             else if(IsKeyDown(KEY_M)||Touch_GreHeld()){greCharging=1;greHold+=dt/1.15f;if(greHold>1)greHold=1;}
             else if(greCharging){ float pw=greHold; greCharging=0;greHold=0; throwGrenade(pw<0.12f?0.45f:pw); }
         }
@@ -819,7 +823,7 @@ static void updatePlayer(float dt)
     float adsWant=0.0f;
     if(!gSelfTest && (adsMouseHold||Touch_ADSHeld()))
         adsWant=(weapon==0||weapon==1)?1.0f:0.0f;
-    ads+=(adsWant-ads)*(1.0f-powf(0.0001f,dt));
+    ads+=(adsWant-ads)*(1.0f-powf(0.000004f,dt));   // 更快的开镜/收镜过渡（旧版偏慢）
     if(ads<0.001f)ads=0.0f; if(ads>0.999f)ads=1.0f;
 }
 
@@ -1439,6 +1443,18 @@ void tankToggleMount(void)
     if(dd<4.6f){ gInTank=1; gVehArmor=50.0f; gRunCd=0; }   // 登车：车体先扛 50 点
 }
 
+// UI hint for the dedicated on-screen 车 button: lit while mounted (dismount)
+// or standing next to a wrecked, drivable enemy vehicle (mount).
+int Ground_VehiclePrompt(void)
+{
+    if(gSelfTest)return 0;
+    if(gInTank)return 1;
+    if(gTank.alive)return 0;
+    float dd=vlen((Vector3){eye.x-gTank.pos.x,0,eye.z-gTank.pos.z});
+    return dd<4.6f;
+}
+int Ground_InVehicle(void){ return gInTank; }
+
 static Vector3 tankFwd(void){ return (Vector3){sinf(gTank.yaw),0,cosf(gTank.yaw)}; }
 
 static void drawEnemyJet(Vector3 p,float yy)
@@ -1621,7 +1637,7 @@ void Ground_Run(int *outMode,int *outEnding)
     yaw=gFlagTest?0.18f:0; pitch=-0.05f; hp=100; weapon=0;
     mag[0]=5; mag[1]=30; reserve[0]=0; reserve[1]=70;   // rifle 5 total, AKM 100 total
     reload=0; reloadTake=0; fireCd=0;
-    grenades=1; gre=(Gre){0}; greCharging=0; greHold=0;
+    grenades=1; gre=(Gre){0}; greCharging=0; greHold=0; greCd=0;
     meleeCd=meleeSwing=0; stepAcc=0; ambT=3.0f;
     celebrate=0; planter=-1; planted=0; bugled=0; objFall=0; talkOpen=0; talkPage=0;
     foesKilled=0; hitMark=0; dmgCd=0; holdT=0; timeAlive=0; frame=0; pvel=v3(0,0,0); ads=0; paused=0; kickP=kickY=gunKick=0; headMsgT=0;
@@ -1642,6 +1658,7 @@ void Ground_Run(int *outMode,int *outEnding)
         Touch_SetPaused(paused);
         Touch_Update(1);
         Touch_SetGrenadeArmed(greCharging);   // reveal left cancel key only while a throw is readied
+        Touch_SetMountLive(Ground_VehiclePrompt());  // show 车 button only near/in a vehicle
         if(IsKeyPressed(KEY_ESCAPE)){ EnableCursor(); *outMode=0; return; }
         if(IsKeyPressed(KEY_ESCAPE)){ EnableCursor(); *outMode=0; return; }
         int wantPause = (!gSelfTest && (Touch_PausePressed()||IsKeyPressed(KEY_P)));
@@ -1670,11 +1687,13 @@ void Ground_Run(int *outMode,int *outEnding)
             if(gCoopRole==2)
             {
                 // client: predict own walk, send intent, receive authoritative world
+                Net_RelayTick(dt);
                 updatePlayer(dt); netClientSend(); netClientRecv();
                 FX_Update(dt); battleFX(dt); Env_Update(dt); kfUpdate(dt); if(introT>0)introT-=dt;
             }
             else
             {
+                Net_RelayTick(dt);
                 if(gCoopRole==1) netHostRecv(dt);
                 updatePlayer(dt); updateFoes(dt); updatePals(dt); warUpdate(dt);
                 if(gCoopRole==1) netHostSend(celebrate>0?1:0);
@@ -1800,8 +1819,10 @@ void Ground_Run(int *outMode,int *outEnding)
         }
         if(!gInTank && ads<0.5f && !gunOccluded)
         {
+            float rMax=(weapon==0)?75.0f:100.0f;
+            float reload01=(reload>0)?clampf(1.0f-reload/rMax,0.0f,1.0f):0.0f;
             if(greCharging) DrawGrenadeView(cam,greHold);
-            else DrawRifleView(cam,weapon,gunKick);
+            else DrawRifleView(cam,weapon,gunKick,reload01);
         }
         EndMode3D();
         if(paused) Touch_DrawPauseMenu();
@@ -1881,7 +1902,24 @@ void Ground_Run(int *outMode,int *outEnding)
     gGroundResult=(GroundResult){0};
     gGroundResult.hp=hp; gGroundResult.foesKilled=foesKilled; gGroundResult.friendliesAlive=palsAlive();
     gGroundResult.holdTime=(int)holdT; gGroundResult.timeAlive=timeAlive;
-    gGroundResult.win=(endId==203||endId==204)?(endId==203?3:2):1;
+    // classify win/loss BEFORE the id is re-themed into one of many endings
+    int victory=(endId==201||endId==202||endId==205);
+    if(victory)
+    {
+        if(Map_IsChosin()) endId=205;
+        else if(Map_IsSnow()) endId=210;        // 雪原歼敌
+        else if(Map_IsNight()) endId=211;       // 夜袭破阵
+        else if(Map_IsDusk()) endId=212;        // 黄昏夺旗
+        else endId=(foesAlive()==0)?213:216;    // 213 全歼夺山 / 216 残敌溃退、阵地在手
+    }
+    else
+    {
+        if(Map_IsChosin()) endId=206;
+        else if(foesKilled>=8) endId=214;       // 断后阻击，掩护主力
+        else if(holdT>=3.0f) endId=217;         // 差一步插上旗
+        else endId=(foesKilled>=5||eye.z<-250)?203:204;
+    }
+    gGroundResult.win=victory?1:((endId==203||endId==214)?3:2);
     gGroundResult.endingId=endId;
     *outEnding=endId; *outMode=9;
 }

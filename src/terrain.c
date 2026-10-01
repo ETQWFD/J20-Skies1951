@@ -12,7 +12,7 @@ static Model gSea = (Model){0};
 // one row per campaign (gScenario index): noise offset makes genuinely
 // different ground; ridgeMul/northMul shape the theatre's terrain.
 typedef struct { float ox,oz,ridgeMul,northMul,eastMul,flatR; } MapCfg;
-static const MapCfg MAPS[21]={
+static const MapCfg MAPS[27]={
     {  0.0f,   0.0f, 225.0f,1.00f,1.00f,170.0f}, // 0  温井伏击战 昼·山谷
     { 41.7f, -23.3f, 235.0f,1.05f,0.85f,150.0f}, // 1  云山攻坚战 昼·丘陵
     {-67.4f,  35.9f, 258.0f,1.18f,0.70f,150.0f}, // 2  长津湖·冰雕连 雪夜
@@ -34,17 +34,23 @@ static const MapCfg MAPS[21]={
     {-96.7f,  80.5f, 244.0f,1.06f,0.92f,130.0f}, // 18 雪马里围歼战 昼·丘陵
     { 17.8f, 118.2f, 276.0f,1.20f,0.98f,110.0f}, // 19 马良山攻防战 陡山
     {-62.4f,-135.1f,262.0f,1.14f,0.84f,120.0f}, // 20 黑云吐岭反击战 黄昏
+    {118.4f,-66.2f,258.0f,1.10f,1.02f,118.0f}, // 21 文登公路狙击战 昼·山谷公路
+    {-128.7f, 54.8f,266.0f,1.16f,0.86f,132.0f}, // 22 兴南港突围战 雪·港湾
+    { 46.9f,140.3f,272.0f,1.20f,0.92f,112.0f}, // 23 阳德高原穿插战 黄昏·高原
+    {136.2f, 8.6f, 238.0f,1.04f,1.06f,128.0f}, // 24 元山登陆支援战 夜·海岸
+    {-104.6f,122.9f,270.0f,1.18f,0.90f,116.0f}, // 25 咸镜南道追击战 雪·山地
+    { 78.3f,-150.4f,248.0f,1.06f,0.98f,134.0f}, // 26 汉城外围防御战 黄昏·硝烟
 };
-static const MapCfg* mapCfg(void){ int s=gScenario; if(s<0||s>20)s=0; return &MAPS[s]; }
+static const MapCfg* mapCfg(void){ int s=gScenario; if(s<0||s>26)s=0; return &MAPS[s]; }
 
 // theme queries used by sky / environment / colours / mission text
 // v1.9: every theatre is a war zone — the sky is smoke-stained everywhere.
-int Map_IsNight(void){ return gScenario==2||gScenario==6||gScenario==16; }
-int Map_IsSnow(void){ return gScenario==2||gScenario==3||gScenario==11||gScenario==16; }
-int Map_IsScorch(void){ return 1; }   // shell-blasted front, all 21 campaigns
-int Map_IsDusk(void){ return gScenario==3||gScenario==9||gScenario==15||gScenario==20; }
+int Map_IsNight(void){ return gScenario==2||gScenario==6||gScenario==16||gScenario==24; }
+int Map_IsSnow(void){ return gScenario==2||gScenario==3||gScenario==11||gScenario==16||gScenario==22||gScenario==25; }
+int Map_IsScorch(void){ return 1; }   // shell-blasted front, all 27 campaigns
+int Map_IsDusk(void){ return gScenario==3||gScenario==9||gScenario==15||gScenario==20||gScenario==23||gScenario==26; }
 int Map_IsChosin(void){ return gScenario==2; }
-int Map_Count(void){ return 21; }
+int Map_Count(void){ return 27; }
 
 static inline float heightRaw(float x, float z)
 {
@@ -200,11 +206,12 @@ void Sea_Draw(Camera3D cam)
     EndBlendMode();
 }
 
-// ---- battlefield ground cover: dry reeds / scorched grass / snow tufts ----
-// ALL visible tufts are baked into ONE mesh (a single draw call) in a disc that
-// follows the camera. This avoids GPU instancing (not reliably supported on old
-// GLES2 / low-end phones) and stays cheap. Anchored to WORLD cells, so tufts
-// stay put while walking; the merged mesh is rebuilt only on crossing a cell.
+// ---- battlefield ground cover: snow tufts / scorched grass / charred clumps ----
+// ALL visible tufts are baked into merged meshes (two draw calls max) in a disc
+// that follows the camera. GPU instancing is avoided (unreliable on old GLES2 /
+// low-end phones). Anchored to WORLD cells, rebuilt only on crossing a cell.
+//   mesh A: snow-covered white tufts (winter maps) or scorched olive grass
+//   mesh B: blackened, burnt clumps scattered on scorched-earth maps (no snow)
 extern Shader gLit;
 #if defined(PLATFORM_ANDROID)
   #define GR_MAX 700      // low/old phones: fewer tufts to keep the frame budget
@@ -213,10 +220,12 @@ extern Shader gLit;
 #endif
 #define GR_VPER 8
 #define GR_IPER 12
-static Mesh     gGrassMesh={0};
-static Material gGrassMat={0};
-static int      gGrassN=0, gGrassReady=0, gHasMesh=0;
+static Mesh     gGrassMesh={0}, gCharMesh={0};
+static Material gGrassMat={0},  gCharMat={0};
+static int      gGrassN=0, gCharN=0, gGrassReady=0, gHasMesh=0, gHasChar=0;
 static int      gCellX=1<<30, gCellZ=1<<30, gCellSc=-1;
+static float    gDensity=1.0f;   // quality setting: 0.45 / 0.7 / 1.0 / 1.35
+void Grass_SetDensity(float d){ if(d<0.25f)d=0.25f; if(d>1.6f)d=1.6f; if(fabsf(d-gDensity)>0.01f)gCellSc=-1; gDensity=d; }
 
 // one crossed blade in local space: quad A along X, quad B along Z
 static const float BL_V[GR_VPER*3]={
@@ -231,21 +240,41 @@ static const unsigned short BL_I[GR_IPER]={0,1,2,0,2,3, 4,5,6,4,6,7};
 static unsigned int grHash(int x,int z){ unsigned int h=(unsigned int)(x*73856093) ^ (unsigned int)(z*19349663); h^=h>>13; h*=1274126177u; h^=h>>16; return h; }
 static float h01(unsigned int h){ return (h>>8)*(1.0f/16777216.0f); }
 
+typedef struct { float*vx,*nx,*uv; unsigned short*ix; int n; } Bld;
+
+static void buildTuft(Bld*b,float X,float Y,float Z,float yaw,float sy,float sxx)
+{
+    float cs=cosf(yaw), sn=sinf(yaw); int base=b->n*GR_VPER;
+    for(int v=0;v<GR_VPER;v++)
+    {
+        float lx=BL_V[v*3]*sxx, ly=BL_V[v*3+1]*sy, lz=BL_V[v*3+2]*sxx;
+        b->vx[(base+v)*3]   = X + lx*cs - lz*sn;
+        b->vx[(base+v)*3+1] = Y - 0.02f + ly;
+        b->vx[(base+v)*3+2] = Z + lx*sn + lz*cs;
+        float nvx=BL_N[v*3], nvy=BL_N[v*3+1], nvz=BL_N[v*3+2];
+        b->nx[(base+v)*3]   = nvx*cs - nvz*sn;
+        b->nx[(base+v)*3+1] = nvy;
+        b->nx[(base+v)*3+2] = nvx*sn + nvz*cs;
+        b->uv[(base+v)*2]=BL_UV[v*2]; b->uv[(base+v)*2+1]=BL_UV[v*2+1];
+    }
+    for(int t=0;t<GR_IPER;t++) b->ix[b->n*GR_IPER+t]=(unsigned short)(base+BL_I[t]);
+    b->n++;
+}
+
 static void grassRebuild(float px, float pz)
 {
     const float STEP=2.6f; const int RCELL=20;
     int cx=(int)floorf(px/STEP), cz=(int)floorf(pz/STEP);
-    gCellX=cx; gCellZ=cz; gCellSc=gScenario; gGrassN=0;
+    gCellX=cx; gCellZ=cz; gCellSc=gScenario; gGrassN=0; gCharN=0;
     int snow=Map_IsSnow();
-    // Each rebuild owns FRESH CPU arrays; this raylib build's UnloadMesh frees
-    // the mesh's CPU vertex/index arrays, so we must never reuse/re-free them.
-    float *vx=(float*)MemAlloc(sizeof(float)*3*GR_MAX*GR_VPER);
-    float *nx=(float*)MemAlloc(sizeof(float)*3*GR_MAX*GR_VPER);
-    float *uv=(float*)MemAlloc(sizeof(float)*2*GR_MAX*GR_VPER);
-    unsigned short*ix=(unsigned short*)MemAlloc(sizeof(unsigned short)*GR_MAX*GR_IPER);
-    int n=0;
-    for(int iz=-RCELL; iz<=RCELL && n<GR_MAX; iz++)
-    for(int ix_= -RCELL; ix_<=RCELL && n<GR_MAX; ix_++)
+    int capA=(int)(GR_MAX*gDensity); if(capA<40)capA=40;
+    Bld A={ MemAlloc(sizeof(float)*3*capA*GR_VPER), MemAlloc(sizeof(float)*3*capA*GR_VPER),
+            MemAlloc(sizeof(float)*2*capA*GR_VPER), MemAlloc(sizeof(unsigned short)*capA*GR_IPER), 0 };
+    Bld B={ MemAlloc(sizeof(float)*3*capA*GR_VPER), MemAlloc(sizeof(float)*3*capA*GR_VPER),
+            MemAlloc(sizeof(float)*2*capA*GR_VPER), MemAlloc(sizeof(unsigned short)*capA*GR_IPER), 0 };
+    int capB=capA;
+    for(int iz=-RCELL; iz<=RCELL; iz++)
+    for(int ix_= -RCELL; ix_<=RCELL; ix_++)
     {
         int wx=cx+ix_, wz=cz+iz;
         unsigned int h1=grHash(wx,wz);
@@ -256,44 +285,37 @@ static void grassRebuild(float px, float pz)
         if(X<-WORLD_HALF+4||X>WORLD_HALF-4||Z<-WORLD_HALF+4||Z>WORLD_HALF-4) continue;
         float dx=X-px, dz=Z-pz; if(dx*dx+dz*dz > (RCELL*STEP)*(RCELL*STEP)) continue;
         float Y=Terrain_Height(X,Z);
-        if(Y<=SEA_Y+1.2f) continue;                  // no reeds under water
+        if(Y<=SEA_Y+1.2f) continue;                  // no tufts under water
         Vector3 nm=Terrain_Normal(X,Z);
         if(nm.y<0.62f) continue;                     // skip steep rock faces
         float yaw=h01(h1^0x1234u)*6.2832f;
-        float sy=(snow?0.55f:0.8f)+h01(h1^0x5678u)*(snow?0.7f:0.9f);
-        float sxx=0.85f+h01(h1^0x9abcu)*0.3f;
-        float cs=cosf(yaw), sn=sinf(yaw);
-        int base=n*GR_VPER;
-        for(int v=0;v<GR_VPER;v++)
-        {
-            float lx=BL_V[v*3]*sxx, ly=BL_V[v*3+1]*sy, lz=BL_V[v*3+2]*sxx;
-            vx[(base+v)*3]   = X + lx*cs - lz*sn;
-            vx[(base+v)*3+1] = Y - 0.02f + ly;
-            vx[(base+v)*3+2] = Z + lx*sn + lz*cs;
-            float nvx=BL_N[v*3], nvy=BL_N[v*3+1], nvz=BL_N[v*3+2];
-            nx[(base+v)*3]   = nvx*cs - nvz*sn;
-            nx[(base+v)*3+1] = nvy;
-            nx[(base+v)*3+2] = nvx*sn + nvz*cs;
-            uv[(base+v)*2]=BL_UV[v*2]; uv[(base+v)*2+1]=BL_UV[v*2+1];
+        int burnt = (!snow) && (h01(h1^0x7777u)<0.20f);   // ~20% blackened clumps
+        if(burnt && B.n<capB)
+        {   // charred, short black-brown stubble left by a shell / flamethrower
+            float sy=0.34f+h01(h1^0x5678u)*0.40f, sxx=0.80f+h01(h1^0x9abcu)*0.3f;
+            buildTuft(&B,X,Y,Z,yaw,sy,sxx);
         }
-        for(int t=0;t<GR_IPER;t++) ix[n*GR_IPER+t]=(unsigned short)(base+BL_I[t]);
-        n++;
+        else if(A.n<capA)
+        {   // snow maps: short snow-covered white tufts; others: scorched olive
+            float sy=(snow?0.42f:0.8f)+h01(h1^0x5678u)*(snow?0.46f:0.9f);
+            float sxx=0.85f+h01(h1^0x9abcu)*0.3f;
+            buildTuft(&A,X,Y,Z,yaw,sy,sxx);
+        }
     }
-    gGrassN=n;
-    if(gHasMesh) UnloadMesh(gGrassMesh);   // frees the PREVIOUS mesh's CPU arrays
-    memset(&gGrassMesh,0,sizeof gGrassMesh);
-    if(n==0)
-    {
-        // nothing to show: release the scratch arrays for this empty rebuild
-        MemFree(vx); MemFree(nx); MemFree(uv); MemFree(ix);
-        gHasMesh=0;
-        return;
-    }
-    gGrassMesh.vertexCount=n*GR_VPER;
-    gGrassMesh.triangleCount=n*(GR_IPER/3);
-    gGrassMesh.vertices=vx; gGrassMesh.normals=nx; gGrassMesh.texcoords=uv; gGrassMesh.indices=ix;
-    UploadMesh(&gGrassMesh,true);            // dynamic: rebuilt while walking
-    gHasMesh=1;
+    // ---- publish A ----
+    if(gHasMesh) UnloadMesh(gGrassMesh);
+    memset(&gGrassMesh,0,sizeof gGrassMesh); gGrassN=A.n;
+    if(A.n==0){ MemFree(A.vx);MemFree(A.nx);MemFree(A.uv);MemFree(A.ix); gHasMesh=0; }
+    else{ gGrassMesh.vertexCount=A.n*GR_VPER; gGrassMesh.triangleCount=A.n*(GR_IPER/3);
+          gGrassMesh.vertices=A.vx; gGrassMesh.normals=A.nx; gGrassMesh.texcoords=A.uv; gGrassMesh.indices=A.ix;
+          UploadMesh(&gGrassMesh,true); gHasMesh=1; }
+    // ---- publish B (charred) ----
+    if(gHasChar) UnloadMesh(gCharMesh);
+    memset(&gCharMesh,0,sizeof gCharMesh); gCharN=B.n;
+    if(B.n==0){ MemFree(B.vx);MemFree(B.nx);MemFree(B.uv);MemFree(B.ix); gHasChar=0; }
+    else{ gCharMesh.vertexCount=B.n*GR_VPER; gCharMesh.triangleCount=B.n*(GR_IPER/3);
+          gCharMesh.vertices=B.vx; gCharMesh.normals=B.nx; gCharMesh.texcoords=B.uv; gCharMesh.indices=B.ix;
+          UploadMesh(&gCharMesh,true); gHasChar=1; }
 }
 
 // GL resources are created per scene OUTSIDE BeginMode3D and bound to that
@@ -301,29 +323,34 @@ static void grassRebuild(float px, float pz)
 void Grass_Init(void)
 {
     if(gGrassReady)return;
-    gGrassMat=LoadMaterialDefault();
-    if(gLit.id>0) gGrassMat.shader=gLit;
-    gCellX=1<<30; gCellZ=1<<30; gCellSc=-1; gGrassN=0; gHasMesh=0;
+    gGrassMat=LoadMaterialDefault(); if(gLit.id>0) gGrassMat.shader=gLit;
+    gCharMat =LoadMaterialDefault(); if(gLit.id>0) gCharMat.shader=gLit;
+    gCellX=1<<30; gCellZ=1<<30; gCellSc=-1; gGrassN=gCharN=0; gHasMesh=gHasChar=0;
     gGrassReady=1;
 }
 void Grass_Unload(void)
 {
     if(!gGrassReady)return;
-    if(gHasMesh){ UnloadMesh(gGrassMesh); gHasMesh=0; }  // frees CPU arrays too
-    MemFree(gGrassMat.maps);
-    gGrassReady=0; gGrassN=0; memset(&gGrassMesh,0,sizeof gGrassMesh);
+    if(gHasMesh){ UnloadMesh(gGrassMesh); gHasMesh=0; }
+    if(gHasChar){ UnloadMesh(gCharMesh); gHasChar=0; }
+    MemFree(gGrassMat.maps); MemFree(gCharMat.maps);
+    gGrassReady=0; gGrassN=gCharN=0;
+    memset(&gGrassMesh,0,sizeof gGrassMesh); memset(&gCharMesh,0,sizeof gCharMesh);
 }
 
 void Grass_Draw(Camera3D cam)
 {
     if(!gGrassReady)return;
+    // winter theatre: snow-laden WHITE tufts, never green; scorched maps: olive
     gGrassMat.maps[MATERIAL_MAP_DIFFUSE].color =
-        Map_IsSnow() ? (Color){158,148,112,255}      // dry reeds through snow
-                     : (Color){96,110,58,255};        // scorched olive grass
+        Map_IsSnow() ? (Color){224,230,240,255}      // snow-covered white tufts
+                     : (Color){86,92,56,255};         // shell-shocked olive grass
+    gCharMat.maps[MATERIAL_MAP_DIFFUSE].color=(Color){26,22,18,255};  // burnt black clumps
     const float STEP=2.6f;
     int cx=(int)floorf(cam.position.x/STEP), cz=(int)floorf(cam.position.z/STEP);
     if(cx!=gCellX||cz!=gCellZ||gScenario!=gCellSc) grassRebuild(cam.position.x,cam.position.z);
     if(gHasMesh) DrawMesh(gGrassMesh,gGrassMat,MatrixIdentity());
+    if(gHasChar) DrawMesh(gCharMesh,gCharMat,MatrixIdentity());
 }
 
 void Terrain_Draw(Camera3D cam)

@@ -164,7 +164,7 @@ static void drawLimb(Vector3 wrist, Vector3 elbow)
     DrawMesh(mHand,mHandMat,mh);
 }
 
-void GunsNative_DrawView(Camera3D cam, int type, float kick)
+void GunsNative_DrawView(Camera3D cam, int type, float kick, float reload01)
 {
     if(!sReady)return;
     // view-model always renders on top and never clips into nearby walls/ground
@@ -182,6 +182,19 @@ void GunsNative_DrawView(Camera3D cam, int type, float kick)
                            QuaternionFromAxisAngle((Vector3){1,0,0},pPitch)),
         QuaternionFromAxisAngle((Vector3){0,0,1},pRoll));
     Quaternion q=QuaternionMultiply(qCam,qPose);
+    Vector3 rr=vnorm(vcross(f,cam.up)), uu=cam.up;
+    // ---- visible reload animation (rifles only): the gun tips muzzle-down and
+    // sinks toward the belt while the magazine is swapped / bolt worked. A sine
+    // envelope makes it dip and return, and a mid-point notch gives a two-beat
+    // motion (drop mag -> seat fresh mag / work the bolt). ----
+    float re=(type!=2 && reload01>0.0f && reload01<1.0f)?sinf(M_PI*reload01):0.0f;
+    if(re>0.001f)
+    {
+        float beat=0.75f+0.25f*sinf(reload01*M_PI*2.0f);   // little settle on seat
+        q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){1,0,0}, 0.62f*re*beat));
+        q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){0,0,1},-0.28f*re));
+        grip=vadd(grip, vadd(vmul(uu,-0.17f*re), vmul(f,-0.10f*re)));
+    }
     if(type==2 && sSwingT>0)
     {
         float ph=1.0f-sSwingT/SWING_DUR;
@@ -197,7 +210,6 @@ void GunsNative_DrawView(Camera3D cam, int type, float kick)
 
     // hands gripping the weapon from below: right on the pistol grip/trigger,
     // left supporting the fore-end. Forearms run front-to-back under the rifle.
-    Vector3 rr=vnorm(vcross(f,cam.up)), uu=cam.up;
     Vector3 rWrist = vadd(grip, vadd(vmul(f,-0.05f), vmul(uu,-0.105f)));
     Vector3 rElbow = vadd(rWrist, vadd(vmul(f,-0.30f), vadd(vmul(rr,0.12f), vmul(uu,-0.20f))));
     drawLimb(rWrist,rElbow);

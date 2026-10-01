@@ -149,39 +149,59 @@ static void updatePlayer(float dt)
         if(IsKeyDown(KEY_UP))pitch+=1; if(IsKeyDown(KEY_DOWN))pitch-=1;
         if(IsKeyDown(KEY_A))roll+=1; if(IsKeyDown(KEY_D))roll-=1;
         if(IsKeyDown(KEY_Q))yaw+=1; if(IsKeyDown(KEY_E))yaw-=1;
-        // touch (inert on desktop): the LEFT STICK is pitch + rudder only, so a
-        // thumb resting on the stick can't bank the jet into the ground; banking
-        // is done by SWIPING the right side of the screen (Touch_LookDX).
+        // Mobile arcade flight: the LEFT STICK alone flies the jet, like a
+        // standard phone flight game. Up/down = pitch; left/right = BANK and a
+        // COORDINATED heading change together, so pushing sideways actually
+        // turns the J-20 instead of just rolling it straight into the ground.
+        // Right-side look swipes deliberately do NOT roll the jet (the whole
+        // right half is the fire/aim area; old behaviour inverted the plane on
+        // an accidental drag and augered it into a ridge).
         float tax=Touch_AxisX(), tay=Touch_AxisY();
 #if defined(PLATFORM_ANDROID)
+        // gentle arcade rates so a thumb can't snap-roll into the ground
         pitch += tay*0.85f;          // push up = climb, pull down = dive
-        yaw   -= tax*0.55f;          // stick sideways = rudder/yaw
-        roll  -= Touch_LookDX()*0.055f;
-        thr   += 0.85f;              // strong auto-cruise: no constant stalling
+        roll  += (-tax)*0.95f;       // bank into the turn...
+        yaw   += (-tax)*0.80f;       // ...and actually change heading
+        thr   += 0.92f;              // strong auto-cruise: no constant stalling
 #else
         pitch += tay; roll -= tax;
 #endif
     }
     P.speed += thr*95*dt;
 #if defined(PLATFORM_ANDROID)
-    if (P.speed<118){ P.speed=118; } // touch: keep the J-20 above stall speed
+    if (P.speed<122){ P.speed=122; } // touch: keep the J-20 comfortably above stall
     if (P.speed<150) pitch-=0.30f*dt;
 #else
     if (P.speed<78){ P.speed=78; pitch-=0.55f*dt; }          // stall: nose drops
 #endif
     if (P.speed>305)P.speed=305;
 #if defined(PLATFORM_ANDROID)
-    // ground-proximity safety: when terrain rushes up, gently raise the nose so
+    // ground-proximity safety: when terrain rushes up, raise the nose firmly so
     // a beginner on a phone can't auger straight into a ridge at full speed.
     {
         float groundClear=P.pos.y-Terrain_Height(P.pos.x,P.pos.z);
-        if(groundClear<70.0f) pitch += (1.0f-groundClear/70.0f)*1.5f*dt;
+        if(groundClear<95.0f) pitch += (1.0f-groundClear/95.0f)*2.2f*dt;
+        if(groundClear<40.0f) P.speed+=30*dt;                // power on to climb away
     }
 #endif
     Vector3 r=RGTQ(P.q), f=FWDQ(P.q), u=UPQ(P.q);
+#if defined(PLATFORM_ANDROID)
+    // coordinated-turn coupling: while banked (right vector dips), keep yawing
+    // so a held side-stick carves a smooth turn hands-off, like an arcade sim.
+    if(!gSelfTest) yaw += -r.y*1.7f;
+    // STICK-RELEASE AUTO-LEVEL: with the thumb centred, gently roll the wings
+    // level and ease the nose toward the horizon, so hands-off flight never
+    // spirals into the ground (the #1 phone complaint). Very weak while turning.
+    if(!gSelfTest && fabsf(Touch_AxisX())<0.10f && fabsf(Touch_AxisY())<0.10f)
+    {
+        float bank=asinf(clampf(r.y,-1,1));
+        roll += -bank*2.4f;
+        pitch += -f.y*1.15f;
+    }
+#endif
     Quaternion dq=QuaternionIdentity();
     if(pitch!=0) dq=QuaternionMultiply(QuaternionFromAxisAngle(r, pitch*1.35f*dt),dq);
-    if(roll !=0) dq=QuaternionMultiply(QuaternionFromAxisAngle(f, roll*2.6f*dt),dq);
+    if(roll !=0) dq=QuaternionMultiply(QuaternionFromAxisAngle(f, roll*2.2f*dt),dq);
     if(yaw  !=0) dq=QuaternionMultiply(QuaternionFromAxisAngle(u, yaw*1.05f*dt),dq);
     P.q=QuaternionMultiply(dq,P.q);
     f=FWDQ(P.q);

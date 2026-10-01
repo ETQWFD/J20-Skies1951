@@ -3,6 +3,7 @@
 #include "noise.h"
 #include "rlgl.h"
 #include "coop.h"
+#include "settings.h"
 
 extern Shader gLit; // scene.c lit shader, reapplied after terrain (re)build
 
@@ -48,7 +49,7 @@ int CNWidth(const char* t,int sz){ return (int)MeasureTextEx(gFont,t,(float)sz,2
 void CNC(const char* t,int cx,int y,int sz,Color c)
 { CN(t,cx-CNWidth(t,sz)/2,y,sz,c); }
 
-enum { ST_MENU, ST_HELP, ST_AIR, ST_GROUND, ST_END };
+enum { ST_MENU, ST_HELP, ST_AIR, ST_GROUND, ST_END, ST_SETTINGS };
 
 int gScenario=0; // 0=general ridge assault, 1=Chosin Reservoir / Ice Company night battle
 
@@ -76,6 +77,13 @@ static const char* gndPara(int id)
     case 203: return "你在冲锋路上倒下时，身边已经躺着数倍于你的敌人。|身后的战友跨过你继续向前，号声没有停。";
     case 205: return "冲锋号在黎明前的雪原上吹响，你们踏过齐膝深的雪夺下了隘口阵地。|长津湖畔的寒夜里，有人永远保持着冲锋的姿态，化成了冰雪中的雕像。";
     case 206: return "你在零下三十多度的雪地里战斗到最后，手指已扣不动枪栓。|号声远去时，阵地上仍保持着伏击的队形——冰与火都没能让这支连队后退一步。";
+    case 210: return "雪原上的最后一辆军车冒起黑烟，守敌被全歼，你们踩着没膝的雪追过了公路。|捷报传回时，后方的运输队正顶着轰炸把炒面和炮弹往前送——你们守住了他们脚下的路。";
+    case 211: return "夜色是最好的伪装。你们摸到阵地前沿，一声号响撕开了缺口，天亮前结束了战斗。|夜战近战，是当年装备落后的志愿军最擅长的打法——拼的就是一口气。";
+    case 212: return "残阳把阵地染成血色的时候，你们终于把残敌压了下去，红旗在黄昏的风里立住。|身后是被炮火翻耕过无数遍的山坡，前面是连夜南撤的敌军。";
+    case 213: return "高地上的敌人被一个不剩地解决掉，你和战友在硝烟里互相搀扶着站起来。|这一仗打得干净——这样的干净，是用很多次不那么干净的冲锋换来的。";
+    case 214: return "你主动留下来断后，把敌人的追兵死死钉在公路上，给主力和伤员争取了时间。|后来主力跳出了包围圈，而那个留下来的火力点，再没有说过一句话。";
+    case 216: return "没等敌人的援军赶到，你们已经把阵地攥在了手里，剩下的敌人丢下山头连夜溃退。|守住，有时比全歼更难——补给断了、人也不多了，可阵地就是没丢。";
+    case 217: return "你几乎就要把旗插上山顶，最后几米却倒在了火力网里。|后来冲上去的战友捡起你身边的旗——你没走完的那几步，他们替你走完了。";
     default:  return "冲锋被压在半山腰。你没能看到天亮时的高地。|可总有人要先冲上去——后来上去的人里，有人记得你。";
     }
 }
@@ -109,7 +117,7 @@ static void drawWrapped(const char** lines,int n,int x,int y,int sz,int gap,Colo
 void DrawEnding(int mode,int endingId,int fromAir,void* res)
 {
     (void)res;
-    bool sacrifice = (endingId==110||endingId==203);
+    bool sacrifice = (endingId==110||endingId==203||endingId==214||endingId==217);
     Color titleC = sacrifice?(Color){255,120,100,255}:((mode==2&&endingId>=111)?(Color){255,160,140,255}:(Color){255,220,120,255});
     int y=70;
     const char* title;
@@ -134,6 +142,13 @@ void DrawEnding(int mode,int endingId,int fromAir,void* res)
         case 203:title="英勇牺牲 · 浩气长存";break;
         case 205:title="长津湖 · 冰血隘口";break;
         case 206:title="冰雕连 · 军魂永驻";break;
+        case 210:title="雪原追击 · 全线告捷";break;
+        case 211:title="夜袭破阵 · 拂晓收兵";break;
+        case 212:title="浴血黄昏 · 红旗不倒";break;
+        case 213:title="全歼守敌 · 攻克山头";break;
+        case 214:title="孤胆断后 · 掩护主力";break;
+        case 216:title="残敌溃退 · 阵地在我";break;
+        case 217:title="差一步的旗 · 后继有人";break;
         default:title="倒在冲锋路上";break;
         }
     }
@@ -220,12 +235,14 @@ static void drawMenuBg(void)
 
 typedef struct { Rectangle r; const char* name; int key, to, scn; } Btn;
 
-static const char* CAMP_NAME[21]={
+static const char* CAMP_NAME[27]={
     "温井伏击战","云山攻坚战","长津湖·冰雕连(雪夜)","松骨峰阻击战(黄昏雪)",
     "上甘岭坑道战(焦土)","金城反击战","汉江夜渡","三八线阵地战(硝烟)",
     "铁原阻击战","横城反击战(黄昏)","平壤外围战","黄草岭阻击战(雪山口)",
     "飞虎山阻击战","德川宁远反击战","清川江围歼战","三所里·龙源里穿插战",
-    "突破临津江(雪夜)","釜谷里阻击战","雪马里围歼战","马良山攻防战","黑云吐岭反击战" };
+    "突破临津江(雪夜)","釜谷里阻击战","雪马里围歼战","马良山攻防战","黑云吐岭反击战",
+    "文登公路狙击战","兴南港突围战(雪)","阳德高原穿插战(黄昏)","元山登陆支援战(夜)",
+    "咸镜南道追击战(雪)","汉城外围防御战(黄昏)" };
 static const int CAMP_KEY[12]={
     KEY_ONE,KEY_TWO,KEY_THREE,KEY_FOUR,KEY_FIVE,KEY_SIX,
     KEY_SEVEN,KEY_EIGHT,KEY_NINE,KEY_ZERO,KEY_MINUS,KEY_EQUAL };
@@ -254,14 +271,14 @@ static int menuLoop(int *go)
         DrawRectangle(0,0,GetScreenWidth(),GetScreenHeight(),(Color){6,10,18,120});
         int SW=GetScreenWidth();
         CNC("长 空 · 1951",SW/2,40,46,(Color){255,232,150,255});
-        CNC("J-20 SKIES OVER KOREA · 抗美援朝二十一大战役 · 重返战场",SW/2,92,18,(Color){225,230,240,235});
+        CNC("J-20 SKIES OVER KOREA · 抗美援朝二十七大战役 · 重返战场",SW/2,92,18,(Color){225,230,240,235});
 
-        // ---- top row: air war / LAN coop / history & controls ----
-        const char* topN[3]={"① 空战 · 驾驶歼-20","⑨ 局域网协同作战","⑩ 操作说明 / 历史"};
-        int topTo[3]={ST_AIR,-2,ST_HELP};
-        float topW=300, topGap=24, topY=112, topH=42;
-        float topX0=SW/2.0f-(3*topW+2*topGap)/2.0f;
-        for(int i=0;i<3;i++)
+        // ---- top row: air war / LAN coop / settings / history & controls ----
+        const char* topN[4]={"① 空战 · 驾驶歼-20","⑨ 联机作战","⑪ 设置","⑩ 操作说明 / 历史"};
+        int topTo[4]={ST_AIR,-2,ST_SETTINGS,ST_HELP};
+        float topW=268, topGap=18, topY=112, topH=42;
+        float topX0=SW/2.0f-(4*topW+3*topGap)/2.0f;
+        for(int i=0;i<4;i++)
         {
             Rectangle r={topX0+i*(topW+topGap),topY,topW,topH};
             bool hov=M_HIT(r);
@@ -340,7 +357,8 @@ int main(int argc,char**argv)
     srand(19511025);
     SetConfigFlags(FLAG_MSAA_4X_HINT|FLAG_WINDOW_RESIZABLE);
     InitWindow(1280,720,APP_TITLE);
-    if(gUncap) SetTargetFPS(0); else SetTargetFPS(60);
+    Settings_Load();
+    Settings_Apply();   // user frame-rate cap + grass density, persisted
     rlSetClipPlanes(0.1f,9000.0f);
     SetExitKey(0); // we manage ESC ourselves
 
@@ -440,6 +458,11 @@ int main(int argc,char**argv)
             }
             state=ST_MENU;
             if(gSelfTest) break;
+        }
+        else if(state==ST_SETTINGS)
+        {
+            Settings_Screen();
+            state=ST_MENU;
         }
         else if(state==ST_AIR)
         {
