@@ -2,8 +2,8 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
-#define SKIES_VERSION "2.1.2"
-#define SKIES_VERCODE 16
+#define SKIES_VERSION "2.1.3"
+#define SKIES_VERCODE 17
 
 extern int gSetFPS;    // 0=60, 1=120, 2=uncapped(up to 480/hardware limit)
 extern int gSetQuality;// 0 smooth, 1 classic, 2 HD, 3 real

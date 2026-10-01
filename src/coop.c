@@ -3,7 +3,9 @@
 // public Kanye UDP relay (frp tunnel) for play across different networks.
 #include "coop.h"
 #include "common.h"
+#include "ui_native.h"
 #include <stdio.h>
+#include <string.h>
 
 int     gCoopRole=0;
 int     gCoopId=0;
@@ -194,7 +196,8 @@ typedef struct {
     float pingMs, sentT, lastSeen;
 } Srv;
 static Srv gSrv[SRV_MAX]; static int gSrvN=0; static int gSrvLoaded=0;
-#define SRV_FILE "skies_servers.txt"
+#define SRV_NAME "skies_servers.txt"
+static void srvPath(char* out,int cap){ Skies_ConfigPath(out,cap,SRV_NAME); }
 
 static void srvSave(void)
 {
@@ -203,18 +206,20 @@ static void srvSave(void)
         int n=snprintf(buf+used,sizeof(buf)-used,"%s|%s\n",gSrv[i].name,gSrv[i].atxt);
         if(n>0)used+=n;
     }
-    SaveFileText(SRV_FILE,buf);
+    char p[300]; srvPath(p,sizeof p);
+    SaveFileText(p,buf);
 }
 static void srvLoad(void)
 {
     if(gSrvLoaded)return; gSrvLoaded=1;
-    char* s=LoadFileText(SRV_FILE); if(!s)return;
-    char *p=s;
-    while(*p && gSrvN<SRV_MAX)
+    char p[300]; srvPath(p,sizeof p);
+    char* s=LoadFileText(p); if(!s)return;
+    char *q=s;
+    while(*q && gSrvN<SRV_MAX)
     {
         char line[100]; int li=0;
-        while(*p && *p!='\n' && li<99) line[li++]=*p++;
-        line[li]=0; if(*p=='\n')p++;
+        while(*q && *q!='\n' && li<99) line[li++]=*q++;
+        line[li]=0; if(*q=='\n')q++;
         char*bar=strchr(line,'|'); if(!bar)continue;
         *bar=0; char*nm=line,*ad=bar+1;
         Srv*v=&gSrv[gSrvN]; memset(v,0,sizeof(*v));
@@ -262,44 +267,103 @@ static void keyPress(const char*k,char*nm,char*ad)
     else if(L+(int)strlen(k)<cap-1){ strcat(cur,k); }
 }
 
+// UTF-8 aware text editing so the real system keyboard (incl. Chinese names),
+// backspace and paste all behave correctly.
+static void utf8put(char*b,int cap,int cp)
+{
+    int L=(int)strlen(b), n= (cp<0x80)?1:(cp<0x800)?2:(cp<0x10000)?3:4;
+    if(L+n+1>=cap) return;
+    unsigned char*p=(unsigned char*)b+L;
+    if(cp<0x80) p[0]=(unsigned char)cp;
+    else if(cp<0x800){ p[0]=0xC0|(cp>>6); p[1]=0x80|(cp&0x3F); }
+    else if(cp<0x10000){ p[0]=0xE0|(cp>>12); p[1]=0x80|((cp>>6)&0x3F); p[2]=0x80|(cp&0x3F); }
+    else { p[0]=0xF0|(cp>>18); p[1]=0x80|((cp>>12)&0x3F); p[2]=0x80|((cp>>6)&0x3F); p[3]=0x80|(cp&0x3F); }
+    b[L+n]=0;
+}
+static void utf8del(char*b)
+{
+    int L=(int)strlen(b); if(!L)return;
+    int i=L-1;
+    while(i>0 && (((unsigned char)b[i])&0xC0)==0x80) i--;   // skip continuation bytes
+    b[i]=0;
+}
+static void bufAppendSanitized(char*b,int cap,const char*s)
+{
+    if(!s)return;
+    for(;*s;s++){ unsigned char c=(unsigned char)*s;
+        // addresses are IP/domain:port — drop spaces, newlines and any junk.
+        if(c>=33 && c<=126) utf8put(b,cap,c); }
+}
+
 // returns 1 when "完成/返回" pressed (close the form)
 static int serverFormScreen(void)
 {
-    static char nm[24], ad[64]; static int opened=0;
+    static char nm[24], ad[64]; static int opened=0, lastFocus=-1;
     if(!opened){ memset(nm,0,sizeof nm); memset(ad,0,sizeof ad);
                  snprintf(nm,sizeof nm,"服务器%d",gSrvN+1);
-                 snprintf(ad,sizeof ad,"%s",""); gKeyFocus=1; opened=1; }
+                 gKeyFocus=1; lastFocus=-1; opened=1; }
+
+    char* cur=(gKeyFocus==0)?nm:ad;
+    int   cap=(gKeyFocus==0)?(int)sizeof nm:(int)sizeof ad;
+
+    // raise the REAL system soft keyboard (Android) whenever focus moves;
+    // the hidden EditText is seeded with this field's current content.
+    if(lastFocus!=gKeyFocus)
+    {
+        lastFocus=gKeyFocus;
+        Skies_IME_Open(cur);
+    }
+
     panelTitle("添加远程服务器（frp / Kanye 穿透）",96);
     int cx=GetScreenWidth()/2;
-    CNC("地址填隧道公网 IP 或域名加端口，例如  123.234.1.2:24463",cx,150,17,(Color){200,208,222,235});
-    Rectangle rn={(float)cx-220,176,440,46}, ra={(float)cx-220,232,440,46};
+    CNC("点输入框弹出手机/电脑系统键盘直接输入；也可复制地址后点“粘贴地址”",cx,150,17,(Color){200,208,222,235});
+    Rectangle rn={(float)cx-220,170,440,44}, ra={(float)cx-220,224,440,44};
     DrawRectangleRec(rn,gKeyFocus==0?(Color){46,60,92,235}:(Color){22,30,44,230});
     DrawRectangleRec(ra,gKeyFocus==1?(Color){46,60,92,235}:(Color){22,30,44,230});
     DrawRectangleLinesEx(rn,2,(Color){255,210,140,255}); DrawRectangleLinesEx(ra,2,(Color){255,210,140,255});
     char lab[96];
-    snprintf(lab,sizeof lab,"名称：%s",nm); CNC(lab,(int)rn.x+14,(int)rn.y+14,20,(Color){235,240,248,255});
-    snprintf(lab,sizeof lab,"地址：%s",ad[0]?ad:"点这里再用下方键盘输入"); CNC(lab,(int)ra.x+14,(int)ra.y+14,20,ad[0]?(Color){235,240,248,255}:(Color){150,160,176,255});
+    snprintf(lab,sizeof lab,"名称：%s",nm); CNC(lab,(int)rn.x+14,(int)rn.y+13,20,(Color){235,240,248,255});
+    snprintf(lab,sizeof lab,"地址：%s",ad[0]?ad:"点这里用系统键盘输入 / 粘贴"); CNC(lab,(int)ra.x+14,(int)ra.y+13,20,ad[0]?(Color){235,240,248,255}:(Color){150,160,176,255});
     if(rectTap(rn))gKeyFocus=0;
     if(rectTap(ra))gKeyFocus=1;
-    // physical / desktop keyboard input
-    int ch; while((ch=GetCharPressed())>0)
-    { char s[2]={(char)ch,0}; if(ch<128) keyPress(s,nm,ad); }
-    if(IsKeyPressed(KEY_BACKSPACE)) keyPress("退格",nm,ad);
-    // on-screen keypad
-    int kbPer=8; float kw=92, kh=44, gx=10, gy=300;
+
+    // ---- text input: desktop physical keyboard + Android soft keyboard ----
+    int ch; while((ch=GetCharPressed())>0) utf8put(cur,cap,ch);
+    if(IsKeyPressed(KEY_BACKSPACE)) utf8del(cur);
+    if((IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL)) && IsKeyPressed(KEY_V))
+        bufAppendSanitized(cur,cap,Skies_ClipGet());
+    int cp; while((cp=Skies_IME_Char())!=0) utf8put(cur,cap,cp);
+    int nb=Skies_IME_BackspacePressed(); while(nb-->0) utf8del(cur);
+    int imeEnter=Skies_IME_EnterPressed();
+
+    // paste button (system clipboard) — addresses only
+    Rectangle rp={(float)cx-220,278,140,32};
+    bool phov=CheckCollisionPointRec(GetMousePosition(),rp)||
+              (gTap&&CheckCollisionPointRec((Vector2){gTapX,gTapY},rp));
+    DrawRectangleRec(rp,phov?(Color){60,96,70,240}:(Color){30,58,42,235});
+    DrawRectangleLinesEx(rp,2,(Color){150,235,180,235});
+    CNC("粘贴地址",(int)(rp.x+rp.width/2),(int)(rp.y+8),18,(Color){225,250,232,255});
+    if(rectTap(rp)){ gKeyFocus=1; const char*c=Skies_ClipGet();
+        ad[0]=0; bufAppendSanitized(ad,sizeof ad,c); Skies_IME_SetText(ad); lastFocus=1; }
+
+    // on-screen keypad kept as an offline fallback (no keyboard attached)
+    int kbPer=8; float kw=92, kh=40, gx=10, gy=322;
     for(int i=0;i<16;i++)
     {
         int col=i%kbPer,row=i/kbPer;
-        Rectangle r={(float)cx-(kbPer*kw+(kbPer-1)*gx)/2 + col*(kw+gx), gy+row*(kh+10), kw,kh};
+        Rectangle r={(float)cx-(kbPer*kw+(kbPer-1)*gx)/2 + col*(kw+gx), gy+row*(kh+8), kw,kh};
         bool hov=CheckCollisionPointRec(GetMousePosition(),r)||
                  (gTap&&CheckCollisionPointRec((Vector2){gTapX,gTapY},r));
         DrawRectangleRec(r,hov?(Color){178,58,44,235}:(Color){30,40,58,235});
         DrawRectangleLinesEx(r,2,(Color){255,210,140,230});
         CNC(KEYS[i],(int)(r.x+kw/2),(int)(r.y+kh/2-10),18,(Color){238,242,250,255});
-        if(rectTap(r)) keyPress(KEYS[i],nm,ad);
+        if(rectTap(r)){ keyPress(KEYS[i],nm,ad);
+            if(gKeyFocus==1) Skies_IME_SetText(ad); else Skies_IME_SetText(nm); }
     }
+
+    int wantConfirm=(btn("确认添加",cx-120,418,210,48) || imeEnter);
     int done=0;
-    if(btn("确认添加",cx-120,408,210,50))
+    if(wantConfirm)
     {
         NetAddr na;
         if(nm[0]&&ad[0]&&Net_ParseRelayAddr(ad,&na)&&gSrvN<SRV_MAX)
@@ -311,8 +375,8 @@ static int serverFormScreen(void)
             srvSave(); done=1;
         }
     }
-    if(btn("返回",cx+120,408,210,50)) done=1;
-    if(done) opened=0;
+    if(btn("返回",cx+120,418,210,48)) done=1;
+    if(done){ opened=0; lastFocus=-1; Skies_IME_Close(); }
     return done;
 }
 

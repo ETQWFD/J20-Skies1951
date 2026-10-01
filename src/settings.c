@@ -1,6 +1,7 @@
 // settings.c - display / language settings screen + persistence.
 #include "settings.h"
 #include "common.h"
+#include "ui_native.h"
 #include "raylib.h"
 #include <stdio.h>
 #include <string.h>
@@ -9,16 +10,18 @@ int gSetFPS=1;
 int gSetQuality=1;
 int gSetLang=0;
 
-#define SET_FILE "skies_settings.txt"
+#define SET_NAME "skies_settings.txt"
 
 void Settings_Save(void)
 {
     char b[64]; snprintf(b,sizeof b,"%d %d %d\n",gSetFPS,gSetQuality,gSetLang);
-    SaveFileText(SET_FILE,b);
+    char p[300]; Skies_ConfigPath(p,sizeof p,SET_NAME);
+    SaveFileText(p,b);
 }
 void Settings_Load(void)
 {
-    char* s=LoadFileText(SET_FILE);
+    char p[300]; Skies_ConfigPath(p,sizeof p,SET_NAME);
+    char* s=LoadFileText(p);
     if(s){ int f=1,q=1,l=0;
            if(sscanf(s,"%d %d %d",&f,&q,&l)==3)
            { if(f>=0&&f<=2)gSetFPS=f; if(q>=0&&q<=3)gSetQuality=q; if(l>=0&&l<=3)gSetLang=l; }
