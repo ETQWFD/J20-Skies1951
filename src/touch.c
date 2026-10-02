@@ -23,6 +23,9 @@ static int   s_greArmed=0;        // a grenade is being charged -> show cancel k
 static float sW,sH;
 
 static int inside(float x,float y,Btn*b){ float dx=x-b->bx,dy=y-b->by; return dx*dx+dy*dy<=b->br*b->br; }
+// expanded landing hit-zone: a thumb landing just outside the drawn circle
+// still grabs the button instead of becoming a camera-look finger (anti-mistouch).
+static int insideE(float x,float y,Btn*b){ float r=b->br*1.55f; float dx=x-b->bx,dy=y-b->by; return dx*dx+dy*dy<=r*r; }
 static int insideRect(float x,float y,float x0,float y0,float w,float h){ return x>=x0&&x<=x0+w&&y>=y0&&y<=y0+h; }
 
 static int latchAct=0,latchB=0,latchSw=0,latchPause=0,latchTalk=0,latchGre=0,latchCan=0,latchMount=0;
@@ -40,6 +43,11 @@ enum { ROLE_NONE=0, ROLE_STICK, ROLE_LOOK,
        ROLE_FIRE, ROLE_ACT, ROLE_B, ROLE_SW, ROLE_ADS, ROLE_TALK, ROLE_GRE, ROLE_GRECANCEL, ROLE_MOUNT, ROLE_PAUSE };
 static int   s_role[MAXT];
 static float s_lx[MAXT], s_ly[MAXT];
+// look-latch: a finger that lands in the look zone does NOT move the camera until
+// it first travels beyond LOOKLATCH px; a pure tap (or near-still hold) there is
+// ignored so an incidental brush can't spin the view / knock the player off aim.
+static int   s_lookOn[MAXT];
+#define LOOKLATCH 13.0f
 static float s_supp=0;           // seconds to swallow every touch (UI handoff)
 void Touch_Suppress(float seconds){ s_supp=seconds; }
 
@@ -75,8 +83,8 @@ void Touch_Update(int mode)
     bFire.bx=0.86f*sW; bFire.by=0.74f*sH; bFire.br=0.105f*sH; bFire.label="火";
     bAct.bx =0.735f*sW; bAct.by=0.85f*sH; bAct.br=0.075f*sH; bAct.label="弹";
     bB.bx   =0.86f*sW;  bB.by=0.50f*sH;  bB.br=0.070f*sH;   bB.label="炸";
-    bSw.bx  =0.72f*sW;  bSw.by=0.67f*sH; bSw.br=0.060f*sH;  bSw.label="换";
-    bAds.bx =0.72f*sW;  bAds.by=0.51f*sH; bAds.br=0.062f*sH; bAds.label="镜";
+    bSw.bx  =0.71f*sW;  bSw.by=0.66f*sH; bSw.br=0.064f*sH;  bSw.label="换";
+    bAds.bx =0.71f*sW;  bAds.by=0.50f*sH; bAds.br=0.074f*sH; bAds.label="镜";
     bTalk.bx=0.585f*sW; bTalk.by=0.85f*sH; bTalk.br=0.058f*sH; bTalk.label="话";
     bGre.bx =0.585f*sW; bGre.by =0.70f*sH; bGre.br =0.058f*sH; bGre.label="雷";
     bMount.bx=0.585f*sW; bMount.by=0.56f*sH; bMount.br=0.058f*sH; bMount.label="车";
@@ -125,21 +133,25 @@ void Touch_Update(int mode)
         int justLanded=(s_role[k]==ROLE_NONE);
         if(justLanded)
         {
+            s_lookOn[k]=0;
             if(newCount>0){ s_menuTap=1; s_menuX=x; s_menuY=y; newCount--; }
             // assign this finger's role exactly once, at its landing point
             s_lx[k]=x; s_ly[k]=y;
             if(insideRect(x,y,12,12,84,56)) s_role[k]=ROLE_PAUSE;
-            else if(s_greArmed && inside(x,y,&bCan)) s_role[k]=ROLE_GRECANCEL;
+            else if(s_greArmed && insideE(x,y,&bCan)) s_role[k]=ROLE_GRECANCEL;
             else if(x < 0.42f*sW)           s_role[k]=ROLE_STICK;
-            else if(inside(x,y,&bFire))     s_role[k]=ROLE_FIRE;
-            else if(inside(x,y,&bAct))      s_role[k]=ROLE_ACT;
-            else if(inside(x,y,&bB))        s_role[k]=ROLE_B;
-            else if(inside(x,y,&bAds))      s_role[k]=ROLE_ADS;
-            else if(inside(x,y,&bSw))       s_role[k]=ROLE_SW;
-            else if(mode==1 && s_mountLive && inside(x,y,&bMount)) s_role[k]=ROLE_MOUNT;
-            else if(mode==1 && inside(x,y,&bTalk)) s_role[k]=ROLE_TALK;
-            else if(mode==1 && inside(x,y,&bGre))  s_role[k]=ROLE_GRE;
-            else                            s_role[k]=ROLE_LOOK;
+            else if(insideE(x,y,&bFire))    s_role[k]=ROLE_FIRE;
+            else if(insideE(x,y,&bAct))     s_role[k]=ROLE_ACT;
+            else if(insideE(x,y,&bB))       s_role[k]=ROLE_B;
+            else if(insideE(x,y,&bAds))     s_role[k]=ROLE_ADS;
+            else if(insideE(x,y,&bSw))      s_role[k]=ROLE_SW;
+            else if(mode==1 && s_mountLive && insideE(x,y,&bMount)) s_role[k]=ROLE_MOUNT;
+            else if(mode==1 && insideE(x,y,&bTalk)) s_role[k]=ROLE_TALK;
+            else if(mode==1 && insideE(x,y,&bGre))  s_role[k]=ROLE_GRE;
+            // free-look only in the central-right band; the extreme right edge is a
+            // dead gutter, so a thumb resting on the bezel never turns the camera.
+            else if(x < 0.975f*sW)          s_role[k]=ROLE_LOOK;
+            else                            s_role[k]=ROLE_NONE;
         }
         switch(s_role[k])
         {
@@ -188,9 +200,19 @@ void Touch_Update(int mode)
             case ROLE_GRECANCEL: bCan.held=1; break;
             case ROLE_LOOK:
             {
-                // per-finger delta from its own last spot; dead-zone + a hard
-                // per-frame cap, so a stray flick can't whip the view 180°.
-                float ddx=(float)(x-s_lx[k]), ddy=(float)(y-s_ly[k]);
+                // Movement from the ORIGINAL landing point is measured until the
+                // thumb crosses the latch threshold; only then does the camera start
+                // following, and from that moment the finger's current spot is the
+                // pivot. A stationary tap / tiny tremor never rotates the view.
+                float ox=(float)(x-s_lx[k]), oy=(float)(y-s_ly[k]);
+                if(!s_lookOn[k])
+                {
+                    if(ox*ox+oy*oy < LOOKLATCH*LOOKLATCH) break;  // still a "press", ignore
+                    s_lookOn[k]=1;
+                    s_lx[k]=x; s_ly[k]=y;                        // arm the pivot, discard the jump
+                    break;
+                }
+                float ddx=ox, ddy=oy;
                 const float DEAD=4.0f, CAP=42.0f;
                 if(ddx> CAP)ddx= CAP; if(ddx<-CAP)ddx=-CAP;
                 if(ddy> CAP)ddy= CAP; if(ddy<-CAP)ddy=-CAP;
@@ -201,7 +223,7 @@ void Touch_Update(int mode)
             }
         }
     }
-    for(int k=n;k<MAXT;k++){ s_role[k]=ROLE_NONE; }
+    for(int k=n;k<MAXT;k++){ s_role[k]=ROLE_NONE; s_lookOn[k]=0; }
     s_lastN=n;
     s_axisX=stickOn?stickDx:0; s_axisY=stickOn?stickDy:0;
     // grenade charge: release edge of the 雷 button throws the charged grenade
