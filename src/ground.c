@@ -673,7 +673,8 @@ static void updatePlayer(float dt)
         int fireMouse=IsMouseButtonDown(MOUSE_BUTTON_LEFT);
         int adsMouse=IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
 #endif
-        float lookMul=1.0f-ads*0.12f;             // 开镜后仅轻微降灵敏度，跟手更快（旧版×0.7 偏肉）
+        // 8x sniper glass needs much finer aim at full ADS; AKM red dot stays quick.
+        float lookMul=1.0f-ads*(weapon==0?0.66f:0.35f);
         yaw+=mdx*0.0026f*lookMul; pitch-=mdy*0.0026f*lookMul;   // 鼠标右移→视角右转
         pitch=clampf(pitch,-1.5f,1.5f);
         if(IsKeyPressed(KEY_ONE))weapon=0;
@@ -855,6 +856,8 @@ static void drawScope(void)
         for(int i=1;i<=3;i++){int y=(int)(i*R*0.2f); DrawLine(cx-3,cy-y,cx+3,cy-y,ret); DrawLine(cx-3,cy+y,cx+3,cy+y,ret);}
         // central solid black dot
         DrawCircleV((Vector2){(float)cx,(float)cy},3.0f,ret);
+        // 8x marking at the lower arc of the lens
+        CNC("8×",cx+ (int)(R*0.72f),cy+(int)(R*0.30f),16,(Color){10,10,12,(unsigned char)(200*ads)});
     }
     else if(weapon==1)
     {
@@ -1740,7 +1743,7 @@ void Ground_Run(int *outMode,int *outEnding)
         if(gShake>0.01f)   // shell shock camera shake
         { float s=gShake*0.55f; Vector3 sh=v3(frand(-s,s),frand(-s,s),frand(-s,s));
           cam.position=vadd(cam.position,sh); cam.target=vadd(cam.target,sh); }
-        { float fovTarget=(weapon==0)?18.0f:40.0f;   // 莫辛/98k 狙击镜放大到18°；AKM 内红点收窄到40°
+        { float fovTarget=(weapon==0)?9.0f:40.0f;   // 莫辛/98k 8倍镜：72°/9°=8×；AKM 内红点收窄到40°
           cam.fovy=72.0f-ads*(72.0f-fovTarget); }
         // hide the first-person gun when something is right in front of the
         // muzzle (steep ground / wall / a soldier) so it can't clip through.
@@ -1818,7 +1821,8 @@ void Ground_Run(int *outMode,int *outEnding)
         if(gSelfTest && gCoopRole==0 && frame>=148)
         {
             weapon = (frame<200)?1:(frame<260?2:0);   // deterministic view-model calibration
-            ads=0.0f; gunOccluded=0; greCharging=0;    // force a clean view-model capture
+            ads = (frame>=292 && frame<340)?1.0f:0.0f;  // capture the 8x scope fully aimed
+            gunOccluded=0; greCharging=0;    // force a clean view-model capture
         }
         if(!gInTank)
         {
@@ -1848,6 +1852,8 @@ void Ground_Run(int *outMode,int *outEnding)
             if(frame==150) TakeScreenshot(TextFormat("%s/shot_akm.png",gShotDir));
             if(frame==200) TakeScreenshot(TextFormat("%s/shot_knife.png",gShotDir));
             if(frame==260) TakeScreenshot(TextFormat("%s/shot_ground.png",gShotDir));
+            if(frame==278) TakeScreenshot(TextFormat("%s/shot_scope_model.png",gShotDir));
+            if(frame==330) TakeScreenshot(TextFormat("%s/shot_scope_ads.png",gShotDir));
         }
         if(gFlagTest && frame==150) TakeScreenshot(TextFormat("%s/shot_flag.png",gShotDir));
 

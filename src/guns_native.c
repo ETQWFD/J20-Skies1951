@@ -21,6 +21,92 @@ static Gun gRifle={0}, gAkm={0}, gKnife={0};
 static Mesh mSleeve={0}, mHand={0};
 static Material mSleeveMat={0}, mHandMat={0};
 static int sArmsReady=0;
+
+// ---- 8x telescopic sight on the Mosin/98k, modelled after the uploaded
+// "Teleskop" part: main tube, flared objective bell + front rim, eyepiece,
+// elevation turret and side knob, coated lens, two steel mounting rings and a
+// solid bridge to the receiver. Pure procedural geometry (the source SLDPRT is
+// a SolidWorks B-rep and cannot be meshed here); swap in an exported STL/GLB
+// later without touching gameplay. All parts are authored in the rifle's local
+// space and ride the same view-model transform as the gun. ----
+typedef struct { Mesh m; } SP;
+static SP sTube={0},sBell={0},sRim={0},sEye={0},sGlass={0},sRingA={0},sRingB={0},
+          sTurret={0},sKnob={0},sBridge={0};
+static Material mSteel={0},mSteelDark={0},mGlass={0},mMount={0};
+static int sScopeReady=0;
+// Rifle local space: barrel runs along Z with the muzzle at -Z, top is +Y,
+// width along X. The optic sits over the receiver, objective pointing to -Z.
+static Vector3 sScopeC={0}; static float sScopeR=0; static float sRingZ1=0,sRingZ2=0,sFrontZ=0;
+
+static Material mkMat(unsigned char r,unsigned char g,unsigned char b){
+    Material mm=LoadMaterialDefault();
+    if(gLit.id>0) mm.shader=gLit;
+    mm.maps[MATERIAL_MAP_DIFFUSE].color=(Color){r,g,b,255};
+    return mm;
+}
+static void buildScope(const float mn[3],const float mx[3])
+{
+    float u=mx[2]-mn[2];                       // barrel length (local Z)
+    sScopeR=0.030f*u;                          // readable optic over the receiver
+    float tubeLen=0.34f*u;
+    sFrontZ=mn[2]+0.36f*u;                     // objective face (toward muzzle, -Z)
+    sScopeC.z=sFrontZ+tubeLen*0.5f;
+    float mountH=0.020f*u;
+    sScopeC.y=mx[1]+mountH+sScopeR*1.05f;
+    sScopeC.x=(mn[0]+mx[0])*0.5f;
+    sRingZ1=sScopeC.z-0.11f*u; sRingZ2=sScopeC.z+0.11f*u;
+    int seg=20;
+    sTube.m =GenMeshCylinder(sScopeR,          tubeLen,      seg);
+    sBell.m =GenMeshCylinder(sScopeR*1.05f,    0.10f*u,      seg);   // flared objective bell
+    sRim.m  =GenMeshCylinder(sScopeR*1.62f,    0.020f*u,     seg);   // front steel rim
+    sEye.m  =GenMeshCylinder(sScopeR*1.30f,    0.070f*u,     seg);   // eyepiece housing (rear,+Z)
+    sGlass.m=GenMeshCylinder(sScopeR*1.46f,    0.008f*u,     seg);   // coated objective lens
+    sRingA.m=GenMeshCylinder(sScopeR*1.16f,    0.030f*u,     seg);   // two steel mounting rings
+    sRingB.m=GenMeshCylinder(sScopeR*1.16f,    0.030f*u,     seg);
+    sTurret.m=GenMeshCylinder(sScopeR*0.62f,   0.055f*u,     12);    // elevation turret (+Y)
+    SP *xs[9]={&sTube,&sBell,&sRim,&sEye,&sGlass,&sRingA,&sRingB,&sTurret,(SP*)0};
+    for(int i=0;xs[i];i++) UploadMesh(&xs[i]->m,false);
+    sKnob.m=GenMeshCylinder(sScopeR*0.50f,0.045f*u,12); UploadMesh(&sKnob.m,false); // windage knob (+X)
+    sBridge.m=GenMeshCube(sScopeR*1.6f,mountH,(sRingZ2-sRingZ1)+0.04f*u);
+    UploadMesh(&sBridge.m,false);
+    mSteel=mkMat(34,36,42); mSteelDark=mkMat(20,21,25);
+    mGlass=mkMat(28,46,58); mMount=mkMat(26,27,31);
+    sScopeReady=1;
+}
+// Place a cylinder (mesh axis raylib +Y) along the chosen local axis:
+// 0 = Z (tube, +Y->+Z), 1 = Y (turret), 2 = X (windage knob, +Y->+X).
+static void scopeCyl(SP*p,Material mat,Vector3 c,int axis,Matrix base)
+{
+    Matrix r=(axis==0)?MatrixRotateX(PI/2.0f):(axis==2)?MatrixRotateZ(-PI/2.0f):MatrixIdentity();
+    Matrix lm=MatrixMultiply(MatrixTranslate(c.x,c.y,c.z),r);
+    DrawMesh(p->m,mat,MatrixMultiply(base,lm));
+}
+static void DrawScopeModel(Matrix base)
+{
+    if(!sScopeReady)return;
+    scopeCyl(&sTube,mSteel,sScopeC,0,base);
+    scopeCyl(&sRingA,mMount,(Vector3){sScopeC.x,sScopeC.y,sRingZ1},0,base);
+    scopeCyl(&sRingB,mMount,(Vector3){sScopeC.x,sScopeC.y,sRingZ2},0,base);
+    scopeCyl(&sBridge,mMount,(Vector3){sScopeC.x,sScopeC.y-sScopeR*1.02f,sScopeC.z},1,base);
+    // objective end (-Z): flared bell, coated glass, steel rim
+    scopeCyl(&sBell,mSteelDark,(Vector3){sScopeC.x,sScopeC.y,sFrontZ+0.050f},0,base);
+    scopeCyl(&sRim,mSteelDark,(Vector3){sScopeC.x,sScopeC.y,sFrontZ},0,base);
+    scopeCyl(&sGlass,mGlass,(Vector3){sScopeC.x,sScopeC.y,sFrontZ+0.004f},0,base);
+    // eyepiece at the rear (+Z), toward the shooter's eye
+    scopeCyl(&sEye,mSteelDark,(Vector3){sScopeC.x,sScopeC.y,sScopeC.z+0.185f},0,base);
+    // elevation turret on top and windage knob on the side
+    scopeCyl(&sTurret,mMount,(Vector3){sScopeC.x+0.004f,sScopeC.y+sScopeR+0.0275f,sScopeC.z},1,base);
+    scopeCyl(&sKnob,mMount,(Vector3){sScopeC.x+sScopeR+0.0225f,sScopeC.y,sScopeC.z+0.004f},2,base);
+}
+static void unloadScope(void)
+{
+    if(!sScopeReady)return;
+    SP*xs[9]={&sTube,&sBell,&sRim,&sEye,&sGlass,&sRingA,&sRingB,&sTurret,&sKnob};
+    for(int i=0;i<9;i++) UnloadMesh(xs[i]->m);
+    UnloadMesh(sBridge.m);
+    MemFree(mSteel.maps);MemFree(mSteelDark.maps);MemFree(mGlass.maps);MemFree(mMount.maps);
+    sScopeReady=0;
+}
 static void gunParams(int type, float*S, float*fF, float*fR, float*fU,
                       float*pYaw, float*pPitch, float*pRoll);
 
@@ -70,6 +156,13 @@ void GunsNative_Load(void)
 {
     if(sReady)return;
     gRifle=build(&G_RIFLE); gAkm=build(&G_AKM); gKnife=build(&G_KNIFE);
+    {
+        float mn[3]={1e30f,1e30f,1e30f}, mx[3]={-1e30f,-1e30f,-1e30f};
+        for(int i=0;i<G_RIFLE.nsub;i++){ const GSubData*sd=&G_RIFLE.sub[i];
+            for(int v=0;v<sd->vcount;v++) for(int k=0;k<3;k++){ float x=sd->pos[v*3+k];
+                if(x<mn[k])mn[k]=x; if(x>mx[k])mx[k]=x; } }
+        buildScope(mn,mx);   // mount the 8x telescopic sight on the receiver
+    }
     // first-person limbs
     mSleeve=GenMeshCylinder(0.038f,0.34f,10);
     mHand  =GenMeshSphere(0.046f,12,10);
@@ -104,6 +197,7 @@ void GunsNative_Unload(void)
         MemFree(mSleeveMat.maps); MemFree(mHandMat.maps);
         sArmsReady=0;
     }
+    unloadScope();
     sReady=0;
 }
 int GunsNative_Ready(void){ return sReady; }
@@ -206,6 +300,7 @@ void GunsNative_DrawView(Camera3D cam, int type, float kick, float reload01)
     Matrix M=MatrixMultiply(QuaternionToMatrix(q),MatrixTranslate(grip.x,grip.y,grip.z));
     Matrix base=MatrixMultiply(MatrixScale(S,S,S),M);
     for(int i=0;i<g->n;i++) if(g->s[i].mesh.vaoId>0) DrawMesh(g->s[i].mesh,g->s[i].mat,base);
+    if(type==0) DrawScopeModel(base);   // the 8x telescopic sight rides the Mosin/98k
     sMuzzle=vadd(grip,vmul(f,0.5f*S));
 
     // hands gripping the weapon from below: right on the pistol grip/trigger,

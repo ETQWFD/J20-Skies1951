@@ -68,7 +68,7 @@ done
 cat > "$STAGE/AndroidManifest.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="$PKG" android:versionCode="18" android:versionName="2.1.4">
+    package="$PKG" android:versionCode="19" android:versionName="2.1.5">
     <uses-sdk android:minSdkVersion="$API" android:targetSdkVersion="$TARGETSDK" />
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
