@@ -37,8 +37,19 @@ void  Net_SetRelay(const char* ip, int port);   // dotted text + host-order port
 void  Net_SetRelayAddr(const NetAddr* a);        // pre-resolved endpoint
 void  Net_ClearRelay(void);
 int   Net_HasRelay(void);
+int   Net_RelayReady(void);                      // 1 once the relay host:port resolved to an IP
 void  Net_RelayTick(float dt);                  // call each frame; emits SKR
 void  Net_RelayPing(void);                     // send one raw SKR now (RTT probe)
-int   Net_ParseRelayAddr(const char* text, NetAddr* out); // "1.2.3.4:55191"
+int   Net_ParseRelayAddr(const char* text, NetAddr* out); // "1.2.3.4:55191" (resolves now)
+
+// Syntax-only parse (NO DNS): accepts IPv4 OR a domain name, with optional
+// :port (default NET_PORT). Cleans common pasted noise (udp://, trailing /,
+// spaces). Use this when saving a server so an offline moment or a slow domain
+// never blocks "add". Returns 1 if the shape is usable.
+int   Net_ParseRelayText(const char* text, char* host, int hostCap, int* portOut);
+// Configure the relay straight from a saved "host:port" string; the domain is
+// resolved lazily in Net_RelayTick() (retried periodically) so play starts even
+// if DNS is briefly unavailable.
+void  Net_SetRelayText(const char* text);
 
 #endif

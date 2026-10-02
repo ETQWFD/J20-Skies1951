@@ -209,6 +209,7 @@ static void srvSave(void)
     char p[300]; srvPath(p,sizeof p);
     SaveFileText(p,buf);
 }
+static int srvSyntaxOk(const char* txt){ char h[80]; int pt; return Net_ParseRelayText(txt,h,sizeof h,&pt); }
 static void srvLoad(void)
 {
     if(gSrvLoaded)return; gSrvLoaded=1;
@@ -224,7 +225,7 @@ static void srvLoad(void)
         *bar=0; char*nm=line,*ad=bar+1;
         Srv*v=&gSrv[gSrvN]; memset(v,0,sizeof(*v));
         strncpy(v->name,nm,sizeof(v->name)-1); strncpy(v->atxt,ad,sizeof(v->atxt)-1);
-        v->valid=Net_ParseRelayAddr(v->atxt,&v->a);
+        v->valid=srvSyntaxOk(v->atxt);   // syntax only; DNS happens lazily
         if(gSrvN==0)v->active=1;
         gSrvN++;
     }
@@ -232,15 +233,17 @@ static void srvLoad(void)
 }
 static Srv* srvActive(void){ for(int i=0;i<gSrvN;i++) if(gSrv[i].active) return &gSrv[i]; return 0; }
 static void srvApplyActive(void)
-{ Srv*s=srvActive(); if(s&&s->valid) Net_SetRelayAddr(&s->a); else Net_ClearRelay(); }
+{ Srv*s=srvActive(); if(s&&s->valid) Net_SetRelayText(s->atxt); else Net_ClearRelay(); }
 
-// ping the ACTIVE relay: SKR heartbeat -> server answers SKO, measure RTT
+// ping the ACTIVE relay: SKR heartbeat -> server answers SKO, measure RTT.
+// online: 1 reachable, 0 offline, -1 still resolving/connecting.
 static void srvPing(float dt)
 {
     Srv*s=srvActive(); if(!s||!s->valid)return;
     if(!Net_IsOpen()) Net_Client();
     srvApplyActive();
     Net_RelayTick(dt);
+    if(!Net_RelayReady()){ s->online=-1; return; }
     s->sentT-=dt;
     if(s->sentT<=0){ s->sentT=1.0f; Net_RelayPing(); s->lastSeen=-GetTime(); }
     NetAddr f; char b[64]; int n;
@@ -298,10 +301,10 @@ static void bufAppendSanitized(char*b,int cap,const char*s)
 // returns 1 when "完成/返回" pressed (close the form)
 static int serverFormScreen(void)
 {
-    static char nm[24], ad[64]; static int opened=0, lastFocus=-1;
+    static char nm[24], ad[64]; static int opened=0, lastFocus=-1; static char formErr[96];
     if(!opened){ memset(nm,0,sizeof nm); memset(ad,0,sizeof ad);
                  snprintf(nm,sizeof nm,"服务器%d",gSrvN+1);
-                 gKeyFocus=1; lastFocus=-1; opened=1; }
+                 gKeyFocus=1; lastFocus=-1; formErr[0]=0; opened=1; }
 
     char* cur=(gKeyFocus==0)?nm:ad;
     int   cap=(gKeyFocus==0)?(int)sizeof nm:(int)sizeof ad;
@@ -347,6 +350,7 @@ static int serverFormScreen(void)
         ad[0]=0; bufAppendSanitized(ad,sizeof ad,c); Skies_IME_SetText(ad); lastFocus=1; }
 
     // on-screen keypad kept as an offline fallback (no keyboard attached)
+    if(formErr[0]) CNC(formErr,cx,314,17,(Color){255,120,110,255});
     int kbPer=8; float kw=92, kh=40, gx=10, gy=322;
     for(int i=0;i<16;i++)
     {
@@ -365,12 +369,16 @@ static int serverFormScreen(void)
     int done=0;
     if(wantConfirm)
     {
-        NetAddr na;
-        if(nm[0]&&ad[0]&&Net_ParseRelayAddr(ad,&na)&&gSrvN<SRV_MAX)
+        char h[80]; int port=NET_PORT; int ok=srvSyntaxOk(ad)&&Net_ParseRelayText(ad,h,sizeof h,&port);
+        if(gSrvN>=SRV_MAX) snprintf(formErr,sizeof formErr,"服务器数量已达上限（%d 个），请先返回删除旧的",SRV_MAX);
+        else if(!nm[0]) snprintf(formErr,sizeof formErr,"请填写名称");
+        else if(!ad[0]) snprintf(formErr,sizeof formErr,"请填写地址，例如  123.234.1.2:24463  或  abc.example.com:24463");
+        else if(!ok)  snprintf(formErr,sizeof formErr,"地址格式不正确：需为  IP或域名:端口  （例如 1.2.3.4:24463），已忽略 udp://、空格");
+        else
         {
             Srv*v=&gSrv[gSrvN++]; memset(v,0,sizeof(*v));
             strncpy(v->name,nm,sizeof(v->name)-1); strncpy(v->atxt,ad,sizeof(v->atxt)-1);
-            v->a=na; v->valid=1; v->active=1;
+            v->valid=1; v->active=1; v->online=-1;
             for(int i=0;i<gSrvN-1;i++) gSrv[i].active=0;
             srvSave(); done=1;
         }
@@ -388,10 +396,12 @@ static int serverListScreen(float dt)
     int cx=GetScreenWidth()/2;
     srvPing(dt);
     Srv* act=srvActive();
-    CNC(act?TextFormat("当前穿透：%s  %s  %s",act->name,act->atxt,
-                       act->online?TextFormat("在线 · %dms",(int)act->pingMs):"离线/检测中")
+    const char* actSt = act? (act->online==1?TextFormat("在线 · %dms",(int)act->pingMs)
+                             : act->online==-1? "解析域名 / 连接中…"
+                             : "离线：请确认 Kanye+frpc 已启动、隧道为 UDP") : "";
+    CNC(act?TextFormat("当前穿透：%s  %s   %s",act->name,act->atxt,actSt)
              : "未选择服务器：点一行设为当前，双击一行直接加入",cx,140,18,
-         act?(Color){150,235,170,255}:(Color){220,200,150,255});
+         act?(act->online==1?(Color){150,235,170,255}:(Color){220,200,150,255}):(Color){220,200,150,255});
     CNC("主机端：在自己电脑/手机上用 Kanye+frpc 开好隧道，点下方“用当前服务器创建主机”",cx,168,15,(Color){180,190,206,235});
     int y=196; static int lastIdx=-1; static float lastT=-10;
     int clicked=-1;
@@ -405,10 +415,14 @@ static int serverListScreen(float dt)
         char row[128];
         snprintf(row,sizeof row,"%s %s   %s",gSrv[i].active?"●":"○",gSrv[i].name,gSrv[i].atxt);
         CNC(row,(int)r.x+16,(int)r.y+8,18,(Color){236,240,248,255});
-        const char* st= gSrv[i].active? (gSrv[i].online?TextFormat("在线 %dms · 双击加入",(int)gSrv[i].pingMs):"离线/检测中")
+        const char* st= gSrv[i].active? (gSrv[i].online==1?TextFormat("在线 %dms · 双击加入",(int)gSrv[i].pingMs)
+                                        : gSrv[i].online==-1? "解析/连接中…"
+                                        : "离线 · 双击仍可尝试")
                                        : "点此设为当前";
-        CNC(st,(int)(r.x+r.width-12),(int)r.y+30,15,
-            gSrv[i].active?(gSrv[i].online?(Color){140,235,170,255}:(Color){230,180,150,255}):(Color){190,198,214,235});
+        Color stc= gSrv[i].active? (gSrv[i].online==1?(Color){140,235,170,255}
+                                  : gSrv[i].online==-1?(Color){235,210,130,255}
+                                  :(Color){230,160,150,255}) : (Color){190,198,214,235};
+        CNC(st,(int)(r.x+r.width-12),(int)r.y+30,15,stc);
         if(rectTap(r)) clicked=i;
         y+=60;
     }

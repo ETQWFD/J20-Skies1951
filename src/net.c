@@ -54,11 +54,17 @@ static int   gSock=-1;
 static int   gWsa=0;
 
 // public relay (Kanye) state
-static int   gRelay=0;
+static int   gRelay=0;          // a relay endpoint is configured (may be pending DNS)
+static int   gRelayResolved=0;  // configured endpoint resolved to a usable IPv4
 static struct sockaddr_in gRelayAddr;
+static char  gRelayHost[96]={0};// saved host: IPv4 literal OR domain (lazily resolved)
+static uint16_t gRelayWPort=NET_PORT;
 static float gRelayHb=0.0f;
+static float gDnsRetry=0.0f;    // seconds until the next DNS attempt while unresolved
 static uint16_t gLocalPort=0;
 static uint16_t gSession=1;     // our own inner session id (1..0x7FFF)
+
+static int relayOn(void){ return gRelay && gRelayResolved; }
 
 // virtual relayed peers: a session learned from an incoming packet is mapped to
 // a stable local handle; NetAddr.port = REL_VMARK | handle.
@@ -159,7 +165,7 @@ int Net_IsOpen(void){ return gSock>=0; }
 void Net_Close(void)
 {
     if(gSock>=0){ NET_CLOSESOCK(gSock); gSock=-1; }
-    gVPN=0; gRelay=0; gRelayHb=0.0f;
+    gVPN=0; gRelay=0; gRelayResolved=0; gRelayHost[0]=0; gRelayHb=0.0f;
 }
 
 static void putTextIp(char*dst,unsigned int netAddr)
@@ -188,7 +194,7 @@ int Net_Poll(NetAddr*from,char*buf,int cap)
     if(n<=0) return 0;
 
     // relayed packet: 'K' VER [srcSess hi lo] payload   (5-byte header)
-    if(gRelay && n>=6 && raw[0]=='K' && raw[1]==KA_VER &&
+    if(relayOn() && n>=6 && raw[0]=='K' && raw[1]==KA_VER &&
        sa.sin_addr.s_addr==gRelayAddr.sin_addr.s_addr)
     {
         uint16_t srcSess=(uint16_t)((raw[2]<<8)|raw[3]);
@@ -224,6 +230,7 @@ static void u16be(unsigned char*p,uint16_t v){ p[0]=(unsigned char)(v>>8); p[1]=
 // 6-byte header to the relay: 'K' VER srcH srcL dstH dstL ; payload follows.
 static void relaySend(uint16_t dstSess,const char*buf,int len)
 {
+    if(!relayOn()||gSock<0) return;
     unsigned char env[NET_MAXPKT+8];
     env[0]='K'; env[1]=KA_VER; u16be(env+2,gSession); u16be(env+4,dstSess);
     int m=len; if(m>NET_MAXPKT) m=NET_MAXPKT;
@@ -241,7 +248,7 @@ void Net_Send(const NetAddr*to,const char*buf,int len)
     sa.sin_port=htons(to->port);
 
     // virtual relayed peer handle? tunnel by inner session id.
-    if(gRelay && (to->port & 0xF000)==REL_VMARK &&
+    if(relayOn() && (to->port & 0xF000)==REL_VMARK &&
        sa.sin_addr.s_addr==gRelayAddr.sin_addr.s_addr)
     {
         int h=to->port & REL_VMASK;
@@ -308,53 +315,139 @@ static int resolveIPv4(const char* host, unsigned int* outAddr)
 
 int Net_ParseRelayAddr(const char* text, NetAddr* out)
 {
-    if(!text||!out) return 0;
-    char tmp[96]; int i=0;
-    for(; text[i] && i<94; i++) tmp[i]=text[i];
-    tmp[i]=0;
-    char* colon=strrchr(tmp,':');
-    char* host=tmp; int port=NET_PORT;
-    if(colon){ *colon=0; host=tmp; port=atoi(colon+1); if(port<=0||port>65535)port=NET_PORT; }
-    int hl=(int)strlen(host);
-    if(hl>2 && host[0]=='[' && host[hl-1]==']'){ host++; host[hl-2]=0; }
+    char host[80]; int port=NET_PORT;
+    if(!Net_ParseRelayText(text,host,sizeof host,&port)) return 0;
     unsigned int a=0;
-    if(!resolveIPv4(host,&a)) return 0;
+    if(!resolveIPv4(host,&a)) return 0;   // this variant resolves immediately
     memset(out,0,sizeof(*out));
     out->addr=ntohl(a); out->port=(uint16_t)port;
     return 1;
 }
 
-static void setRelayRaw(unsigned int netAddr,uint16_t port)
+// Trim whitespace, strip a leading scheme and a trailing path, then validate
+// the host:port SHAPE only (no DNS). Host may be a dotted IPv4 or a domain.
+int Net_ParseRelayText(const char* text, char* host, int hostCap, int* portOut)
+{
+    if(!text||!host||hostCap<=0) return 0;
+    char tmp[100]; int n=0;
+    for(const unsigned char*p=(const unsigned char*)text; *p && n<98; p++)
+    { unsigned char c=*p; if(c!=' '&&c!='\t'&&c!='\n'&&c!='\r') tmp[n++]= (char)c; }
+    tmp[n]=0;
+    if(!n) return 0;
+    // drop scheme: udp://, http://, frp:// ...
+    char*p=tmp; char*sc=strstr(p,"://"); if(sc) p=sc+3;
+    while(*p=='/') p++;
+    // cut a trailing path / query
+    char*slash=strpbrk(p,"/?"); if(slash)*slash=0;
+    // split host:port (support [v6-literal] loosely, though play is IPv4)
+    char*h=p; int port=NET_PORT;
+    int hl=(int)strlen(h);
+    if(hl>2 && h[0]=='[' && h[hl-1]==']'){ h++; h[hl-2]=0; }
+    else { char*colon=strrchr(h,':');
+           if(colon){ *colon=0; const char*pp=colon+1;
+               for(const char*z=pp;*z;z++) if(*z<'0'||*z>'9'){ return 0; } // port must be digits
+               int v=atoi(pp); if(v<=0||v>65535) return 0; port=v; } }
+    // strip a leading @ (user@host) just in case
+    char*at=strrchr(h,'@'); if(at) h=at+1;
+    hl=(int)strlen(h);
+    if(hl<1||hl>hostCap-1||hl>253) return 0;
+    // split into labels
+    char lab[64][64]; int nl=0, li=0;
+    for(int i=0;i<=hl;i++){
+        if(i==hl||h[i]=='.'){ if(li==0||li>63) return 0; lab[nl][li]=0; nl++; li=0; if(i==hl)break; }
+        else { char c=h[i];
+            if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='-')) return 0;
+            if(li==0&&c=='-') return 0;               // no label starting with '-'
+            if(li>0&&c=='-'&&(i+1==hl||h[i+1]=='.')) return 0; // no label ending with '-'
+            if(li<63) lab[nl][li++]=c; }
+    }
+    int allNumeric=1, anyLetter=0;
+    for(int i=0;i<nl;i++) for(int j=0;lab[i][j];j++){
+        char c=lab[i][j];
+        if((c>='a'&&c<='z')||(c>='A'&&c<='Z')){ allNumeric=0; anyLetter=1; } }
+    if(allNumeric)
+    {   if(nl!=4) return 0;
+        for(int i=0;i<4;i++){ int v=0; for(int j=0;lab[i][j];j++) v=v*10+(lab[i][j]-'0');
+            if(v>255) return 0; }
+    }
+    else
+    {   if(nl<2||!anyLetter) return 0;
+        int tldLetter=0; for(int j=0;lab[nl-1][j];j++){ char c=lab[nl-1][j];
+            if((c>='a'&&c<='z')||(c>='A'&&c<='Z')) tldLetter=1; }
+        if(!tldLetter) return 0;   // TLD can't be all digits
+    }
+    for(int i=0;i<hl;i++) host[i]=h[i]; host[hl]=0;
+    if(portOut)*portOut=port;
+    return 1;
+}
+
+static void applyResolved(unsigned int netAddr,uint16_t port)
 {
     Net_Init();
     memset(&gRelayAddr,0,sizeof gRelayAddr);
     gRelayAddr.sin_family=AF_INET; gRelayAddr.sin_addr.s_addr=netAddr;
     gRelayAddr.sin_port=htons(port);
-    gRelay=1; gRelayHb=0.0f;
+    gRelayResolved=1; gRelayHb=0.0f;
+}
+static void setRelayRaw(unsigned int netAddr,uint16_t port)
+{
+    Net_Init();
+    gRelay=1; gRelayHost[0]=0; gDnsRetry=0.0f;
+    applyResolved(netAddr,port);
 }
 void Net_SetRelay(const char* ip, int port)
 {
     unsigned int a=0;
-    if(!ip || !resolveIPv4(ip,&a)){ gRelay=0; return; }
+    if(!ip||!resolveIPv4(ip,&a)){ gRelay=0; gRelayResolved=0; return; }
     setRelayRaw(a,(uint16_t)port);
 }
 void Net_SetRelayAddr(const NetAddr* a)
 {
-    if(!a){ gRelay=0; return; }
+    if(!a){ gRelay=0; gRelayResolved=0; return; }
     setRelayRaw(htonl((uint32_t)a->addr),a->port);
 }
-void Net_ClearRelay(void){ gRelay=0; }
+
+// Configure from a saved "host:port" string. Accepts domains; DNS is deferred to
+// Net_RelayTick so adding/starting never blocks and tolerates brief offline.
+void Net_SetRelayText(const char* text)
+{
+    char host[80]; int port=NET_PORT;
+    if(!Net_ParseRelayText(text,host,sizeof host,&port)){ gRelay=0; gRelayResolved=0; return; }
+    // Idempotent: callers (host lobby) re-apply every frame; don't reset DNS /
+    // do a blocking getaddrinfo on every frame when the endpoint is unchanged.
+    char want[100]; snprintf(want,sizeof want,"%s:%d",host,port);
+    static char lastSet[100]={0};
+    if(gRelay && gRelayResolved && strcmp(lastSet,want)==0) return;
+    Net_Init();
+    gRelay=1; gRelayResolved=0; gRelayHb=0.0f; gDnsRetry=0.0f;
+    strncpy(gRelayHost,host,sizeof gRelayHost-1); gRelayHost[sizeof gRelayHost-1]=0;
+    gRelayWPort=(uint16_t)port;
+    strncpy(lastSet,want,sizeof lastSet-1); lastSet[sizeof lastSet-1]=0;
+}
+void Net_ClearRelay(void){ gRelay=0; gRelayResolved=0; gRelayHost[0]=0; }
 int  Net_HasRelay(void){ return gRelay; }
+int  Net_RelayReady(void){ return relayOn(); }
 
 // raw heartbeat directly to the relay (Kanye answers a bare SKO for RTT ping)
 static void relayRaw(const char*s,int n){
-    if(!gRelay||gSock<0) return;
+    if(!relayOn()||gSock<0) return;
     sendto(gSock,s,n,0,(struct sockaddr*)&gRelayAddr,sizeof(gRelayAddr));
 }
 void Net_RelayPing(void){ relayRaw("SKR",3); }
 void Net_RelayTick(float dt)
 {
     if(!gRelay || gSock<0) return;
+    if(!gRelayResolved && gRelayHost[0])
+    {
+        gDnsRetry-=dt;
+        if(gDnsRetry<=0.0f)
+        {   unsigned int a=0;
+            if(resolveIPv4(gRelayHost,&a)) applyResolved(a,gRelayWPort);
+            else gDnsRetry=2.0f;   // retry every 2s; UI shows "解析/连接中"
+        }
+        return;
+    }
+    if(!gRelayResolved) return;
     gRelayHb-=dt;
     if(gRelayHb<=0){ gRelayHb=2.0f; relayRaw("SKR",3); }
 }
