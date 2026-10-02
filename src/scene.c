@@ -363,43 +363,77 @@ void DrawBlobShadow(Vector3 feet, float radius)
 }
 
 // ------------------------------------------------------------- soldiers (feet origin, facing -Z)
-void DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp, float phase)
+void DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp, float phase, int moving)
 {
     Quaternion q=QuaternionFromAxisAngle((Vector3){0,1,0}, yaw);
     Matrix M=root(feet,q,scale);
     int body = uniform==1 ? C_GI : (uniform==2 ? C_WHITE : C_PVA);
     int leg  = uniform==2 ? C_WHITE : C_DARKOLIVE;
-    // walk cycle: legs stride (pivot at hip), arms counter-sway, body bobs
-    float sw  = sinf(phase);                 // -1..1
-    float sw2 = sinf(phase+M_PI);
-    float stride = 0.42f;                    // ~24 degrees
-    float bob = fabsf(cosf(phase))*0.05f;
-    Quaternion legL = QuaternionFromAxisAngle((Vector3){1,0,0}, sw*stride);
-    Quaternion legR = QuaternionFromAxisAngle((Vector3){1,0,0}, sw2*stride);
-    Quaternion aim = QuaternionFromAxisAngle((Vector3){1,0,0}, rifleUp? -78*DEG2R:12*DEG2R);
-    Quaternion armL = QuaternionMultiply(aim,QuaternionFromAxisAngle((Vector3){1,0,0}, sw2*0.10f));
-    Quaternion armR = QuaternionMultiply(aim,QuaternionFromAxisAngle((Vector3){1,0,0}, sw*0.10f));
-    // legs (box pivot pulled up toward the hip so the stride rotates from the hip)
-    DrawPart(P_BOX,leg,M,MPartQ((Vector3){-0.13f,0.50f,0.0f},legL,(Vector3){0.17f,0.84f,0.2f}));
-    DrawPart(P_BOX,leg,M,MPartQ((Vector3){ 0.13f,0.50f,0.0f},legR,(Vector3){0.17f,0.84f,0.2f}));
-    // boots
-    DrawPart(P_BOX,C_BLACK,M,MPartQ((Vector3){-0.13f,0.10f,-0.04f},legL,(Vector3){0.19f,0.16f,0.30f}));
-    DrawPart(P_BOX,C_BLACK,M,MPartQ((Vector3){ 0.13f,0.10f,-0.04f},legR,(Vector3){0.19f,0.16f,0.30f}));
-    DrawPart(P_BOX,body,M,MPart((Vector3){0,1.2f+bob,0},(Vector3){1,0,0},0,(Vector3){0.54f,0.74f,0.32f}));
-    // belt + ammo bandolier (PVA) / web gear (GI)
-    DrawPart(P_BOX,C_DARK,M,MPart((Vector3){0,1.02f+bob,0},(Vector3){1,0,0},0,(Vector3){0.56f,0.10f,0.34f}));
-    if(uniform!=1) DrawPart(P_BOX,C_BROWN,M,MPart((Vector3){0,1.32f+bob,0.17f},(Vector3){1,0,0},0,(Vector3){0.20f,0.46f,0.05f}));
-    DrawPart(P_BOX,C_BROWN,M,MPart((Vector3){0,1.18f+bob,0.24f},(Vector3){1,0,0},0,(Vector3){0.46f,0.5f,0.16f})); // pack
-    // arms (counter-sway on top of the aim pose)
-    DrawPart(P_BOX,body,M,MPartQ((Vector3){-0.36f,1.42f+bob,-0.02f},armL,(Vector3){0.15f,0.62f,0.17f}));
-    DrawPart(P_BOX,body,M,MPartQ((Vector3){ 0.36f,1.42f+bob,-0.02f},armR,(Vector3){0.15f,0.62f,0.17f}));
-    DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){0,1.74f+bob,0},(Vector3){0,1,0},0,(Vector3){0.32f,0.36f,0.32f}));
-    if (uniform==1) DrawPart(P_SPHERE,C_HELMET,M,MPart((Vector3){0,1.88f+bob,-0.01f},(Vector3){1,0,0},0,(Vector3){0.46f,0.22f,0.46f}));
-    else            DrawPart(P_SPHERE,(uniform==2?C_WHITE:C_KHAKI),M,MPart((Vector3){0,1.86f+bob,0.0f},(Vector3){1,0,0},0,(Vector3){0.4f,0.16f,0.4f})); // cotton cap
-    // rifle (rides the aim pose, small bob)
-    Quaternion rq = QuaternionFromAxisAngle((Vector3){1,0,0}, rifleUp?-80*DEG2R:10*DEG2R);
-    DrawPart(P_BOX,C_BLACK,M,MPartQ((Vector3){0.14f,1.40f+bob,-0.4f},rq,(Vector3){0.07f,0.07f,1.0f}));
-    DrawPart(P_BOX,C_WOOD,M,MPartQ((Vector3){0.14f,1.42f+bob,-0.05f},rq,(Vector3){0.09f,0.1f,0.42f}));
+    // walk cycle only while actually moving; a standing man no longer marches in
+    // place (the old constant "walking in place" was the strange gait).
+    float mv = moving?1.0f:0.0f;
+    float sw  = sinf(phase)*mv, sw2 = sinf(phase+M_PI)*mv;
+    float hipA = 0.55f, kneeB = 0.75f*fabsf(sw);     // hip swing + knee lift
+    float bob = fabsf(cosf(phase))*0.045f*mv;
+
+    Vector3 Xv={1,0,0};
+    Matrix boxI=MatrixIdentity();
+    // part drawn with a fully pre-composed local transform inside M
+    #define DP(shape,color,F) DrawPart(shape,color,M,(F))
+
+    // ---- two-segment legs: hip pivot, thigh, bent knee, shin, boot on the foot.
+    // The boot is a CHILD of the shin transform so the foot follows the leg. ----
+    for(int li=0;li<2;li++)
+    {
+        float sx=li?0.13f:-0.13f;
+        float hipSwing = li? sw2*hipA : sw*hipA;
+        Vector3 hip={sx,0.90f,0};
+        Matrix thigh=MPartQ(hip,QuaternionFromAxisAngle(Xv,hipSwing),v3(1,1,1));
+        DP(P_BOX,leg,MatrixMultiply(MPartQ((Vector3){0,-0.22f,0},QuaternionIdentity(),(Vector3){0.16f,0.46f,0.19f}),thigh));
+        // knee sits at the bottom of the thigh; shin folds forward by kneeB
+        Matrix knee=MatrixMultiply(MPartQ((Vector3){0,-0.45f,0},
+                       QuaternionFromAxisAngle(Xv,-kneeB-0.12f),v3(1,1,1)),thigh);
+        DP(P_BOX,leg,MatrixMultiply(MPartQ((Vector3){0,-0.21f,0},QuaternionIdentity(),(Vector3){0.145f,0.43f,0.165f}),knee));
+        // boot at the far end of the shin, tilting with it
+        DP(P_BOX,C_BLACK,MatrixMultiply(MPartQ((Vector3){0,-0.42f,-0.05f},QuaternionIdentity(),(Vector3){0.17f,0.14f,0.30f}),knee));
+    }
+
+    // ---- torso (slightly slimmer, natural head ratio) ----
+    DP(P_BOX,body,MPart((Vector3){0,1.28f+bob,0},Xv,0,(Vector3){0.50f,0.72f,0.30f}));
+    DP(P_BOX,C_DARK,MPart((Vector3){0,1.04f+bob,0},Xv,0,(Vector3){0.52f,0.09f,0.32f}));     // belt
+    if(uniform!=1) DP(P_BOX,C_BROWN,MPart((Vector3){0,1.34f+bob,0.165f},Xv,0,(Vector3){0.16f,0.44f,0.05f})); // bandolier
+    DP(P_BOX,C_BROWN,MPart((Vector3){0,1.24f+bob,0.235f},Xv,0,(Vector3){0.42f,0.46f,0.15f}));   // pack
+    // neck + smaller head (old head was oversized)
+    DP(P_SPHERE,body,MPart((Vector3){0,1.66f+bob,0},Xv,0,(Vector3){0.13f,0.12f,0.13f}));
+    DP(P_SPHERE,C_SKIN,MPart((Vector3){0,1.80f+bob,0},Xv,0,(Vector3){0.245f,0.275f,0.245f}));
+    if (uniform==1) DP(P_SPHERE,C_HELMET,MPart((Vector3){0,1.93f+bob,-0.01f},Xv,0,(Vector3){0.32f,0.15f,0.32f}));
+    else            DP(P_SPHERE,(uniform==2?C_WHITE:C_KHAKI),MPart((Vector3){0,1.91f+bob,0},Xv,0,(Vector3){0.27f,0.11f,0.27f}));
+
+    // ---- the RIFLE, aimed forward (-Z): stock, receiver, fore-end, long barrel,
+    // curved magazine and front sight — unmistakably a gun, not a baton. ----
+    float aimAng = rifleUp? -0.10f : 0.42f;                 // near-level aim vs low ready
+    Matrix arm = MatrixMultiply(
+        MPartQ((Vector3){0.10f,1.40f+bob,-0.10f},QuaternionFromAxisAngle(Xv,aimAng),v3(1,1,1)),
+        MatrixMultiply(MPartQ(v3(0,0,0),QuaternionFromAxisAngle((Vector3){0,1,0},0.05f),v3(1,1,1)),M));
+    // wooden stock toward the shoulder (+Z)
+    DrawPart(P_BOX,C_WOOD,arm,MPart((Vector3){-0.10f,-0.01f,0.34f},Xv,8*DEG2R,(Vector3){0.10f,0.13f,0.34f}));
+    DrawPart(P_BOX,C_WOOD,arm,MPart((Vector3){0,-0.02f,0.12f},Xv,0,(Vector3){0.085f,0.11f,0.14f}));     // grip
+    DrawPart(P_BOX,C_DARK,arm,MPart((Vector3){0,0.02f,-0.05f},Xv,0,(Vector3){0.075f,0.10f,0.26f}));    // receiver/bolt
+    DrawPart(P_BOX,C_WOOD,arm,MPart((Vector3){0,-0.02f,-0.34f},Xv,0,(Vector3){0.075f,0.085f,0.40f}));  // fore-end
+    DrawPart(P_CYL,C_DARK,arm,MPart((Vector3){0,0.035f,-0.72f},Xv,90*DEG2R,(Vector3){0.028f,0.62f,0.028f})); // barrel
+    DrawPart(P_CYL,C_DARK,arm,MPart((Vector3){0,0.035f,-1.02f},Xv,90*DEG2R,(Vector3){0.04f,0.10f,0.04f}));   // muzzle
+    DrawPart(P_BOX,C_DARK,arm,MPart((Vector3){0,-0.11f,-0.10f},Xv,-6*DEG2R,(Vector3){0.06f,0.18f,0.10f}));   // curved magazine
+    DrawPart(P_BOX,C_DARK,arm,MPart((Vector3){0,0.09f,-0.52f},Xv,0,(Vector3){0.02f,0.05f,0.02f}));     // front sight
+    DrawPart(P_BOX,C_DARK,arm,MPart((Vector3){0,0.09f,0.02f},Xv,0,(Vector3){0.035f,0.045f,0.02f}));    // rear sight
+
+    // ---- arms reach forward onto the rifle (rear hand on grip, front on fore-end) ----
+    Quaternion qr=QuaternionFromAxisAngle(Xv,rifleUp?-1.15f:-0.75f);
+    Quaternion qf=QuaternionFromAxisAngle(Xv,rifleUp?-1.25f:-0.85f);
+    DP(P_BOX,body,MPartQ((Vector3){ 0.32f,1.42f+bob,0.0f},qr,(Vector3){0.13f,0.55f,0.15f}));   // right arm
+    DP(P_SPHERE,C_SKIN,MPart((Vector3){0.06f,1.36f+bob,-0.06f},Xv,0,(Vector3){0.075f,0.075f,0.075f}));
+    DP(P_BOX,body,MPartQ((Vector3){-0.30f,1.42f+bob,0.0f},qf,(Vector3){0.13f,0.58f,0.15f}));   // left arm
+    DP(P_SPHERE,C_SKIN,MPart((Vector3){0.0f,1.36f+bob,-0.36f},Xv,0,(Vector3){0.075f,0.075f,0.075f}));
+    #undef DP
 }
 
 // fallen soldier: body lying flat on its back along local +Z
@@ -482,14 +516,37 @@ void DrawVehicle(Vector3 pos, float yaw, int kind, float scale)
         DrawPart(P_BOX,C_BROWN,M,MPart((Vector3){2.2f,0.4f,1.5f},X,0,(Vector3){0.8f,0.8f,0.8f}));
         DrawPart(P_BOX,C_BROWN,M,MPart((Vector3){-2.1f,0.3f,-1.4f},X,0,(Vector3){0.6f,0.6f,0.6f}));
     }
-    else // kind 0 truck / default
+    else // kind 0: clearly readable military 2.5-ton cargo truck (cab at -Z nose)
     {
-        DrawPart(P_BOX,C_GI,M,MPart((Vector3){0,0.85f,0.6f},X,0,(Vector3){2.3f,1.1f,3.8f}));
-        DrawPart(P_BOX,C_GI,M,MPart((Vector3){0,1.25f,-1.7f},X,0,(Vector3){2.2f,1.4f,1.5f}));
-        DrawPart(P_BOX,C_GLASS,M,MPart((Vector3){0,1.45f,-2.1f},X,0,(Vector3){2.0f,0.7f,0.1f}));
-        for (int s=-1;s<=1;s+=2)
-        for (int wz=-1;wz<=1;wz+=2)
-            DrawPart(P_CYL,C_BLACK,M,MPart((Vector3){s*1.2f,0.45f,(float)wz*1.8f},Z,90*DEG2R,(Vector3){0.55f,0.3f,0.55f}));
+        // ladder chassis + axles
+        DrawPart(P_BOX,C_DARK,M,MPart((Vector3){0,0.55f,0.2f},X,0,(Vector3){2.0f,0.18f,4.6f}));
+        DrawPart(P_CYL,C_DARK,M,MPart((Vector3){0,0.5f,-1.7f},Z,90*DEG2R,(Vector3){0.10f,2.5f,0.10f}));
+        DrawPart(P_CYL,C_DARK,M,MPart((Vector3){0,0.5f, 1.9f},Z,90*DEG2R,(Vector3){0.10f,2.5f,0.10f}));
+        // cab (front): nose, roof and sides leave obvious windows
+        DrawPart(P_BOX,C_GI,M,MPart((Vector3){0,0.95f,-1.95f},X,0,(Vector3){2.25f,0.55f,0.6f}));   // hood
+        DrawPart(P_BOX,C_GI,M,MPart((Vector3){0,1.55f,-1.35f},X,0,(Vector3){2.25f,0.9f,1.3f}));   // cab block
+        DrawPart(P_BOX,C_GI,M,MPart((Vector3){0,2.05f,-1.35f},X,0,(Vector3){2.3f,0.16f,1.4f}));   // cab roof
+        DrawPart(P_BOX,C_GLASS,M,MPart((Vector3){0,1.62f,-2.02f},X,0,(Vector3){1.9f,0.62f,0.08f})); // windshield
+        DrawPart(P_BOX,C_GLASS,M,MPart((Vector3){ 1.13f,1.6f,-1.35f},X,0,(Vector3){0.06f,0.55f,1.0f})); // side windows
+        DrawPart(P_BOX,C_GLASS,M,MPart((Vector3){-1.13f,1.6f,-1.35f},X,0,(Vector3){0.06f,0.55f,1.0f}));
+        // grille + bumper + headlamps on the nose
+        DrawPart(P_BOX,C_DARK,M,MPart((Vector3){0,1.0f,-2.27f},X,0,(Vector3){1.7f,0.4f,0.08f}));
+        DrawPart(P_BOX,C_STEEL,M,MPart((Vector3){0,0.72f,-2.32f},X,0,(Vector3){2.3f,0.12f,0.12f}));
+        DrawPart(P_SPHERE,C_YELLOW,M,MPart((Vector3){ 0.85f,1.0f,-2.32f},X,0,(Vector3){0.13f,0.13f,0.13f}));
+        DrawPart(P_SPHERE,C_YELLOW,M,MPart((Vector3){-0.85f,1.0f,-2.32f},X,0,(Vector3){0.13f,0.13f,0.13f}));
+        // cargo bed: low plank sides + tailgate so the bed shape is unmistakable
+        DrawPart(P_BOX,C_WOOD,M,MPart((Vector3){0,0.95f,0.85f},X,0,(Vector3){2.2f,0.12f,3.0f}));
+        DrawPart(P_BOX,C_GI,M,MPart((Vector3){ 1.12f,1.25f,0.85f},X,0,(Vector3){0.10f,0.55f,3.0f}));
+        DrawPart(P_BOX,C_GI,M,MPart((Vector3){-1.12f,1.25f,0.85f},X,0,(Vector3){0.10f,0.55f,3.0f}));
+        DrawPart(P_BOX,C_GI,M,MPart((Vector3){0,1.25f,2.32f},X,0,(Vector3){2.25f,0.55f,0.10f}));
+        DrawPart(P_BOX,C_GI,M,MPart((Vector3){0,1.25f,-0.6f},X,0,(Vector3){2.25f,0.45f,0.10f}));
+        // four black rubber wheels with light steel hubs
+        for(int s=-1;s<=1;s+=2)
+        for(int wz=-1;wz<=1;wz+=2)
+        {
+            DrawPart(P_CYL,C_BLACK,M,MPart((Vector3){s*1.12f,0.48f,(wz<0?-1.7f:1.9f)},Z,90*DEG2R,(Vector3){0.5f,0.3f,0.5f}));
+            DrawPart(P_CYL,C_STEEL,M,MPart((Vector3){s*1.13f,0.48f,(wz<0?-1.7f:1.9f)},Z,90*DEG2R,(Vector3){0.22f,0.32f,0.22f}));
+        }
     }
 }
 

@@ -13,6 +13,8 @@ GroundResult gGroundResult={0};
 #define NP 12   // friendly PVA
 typedef struct { Vector3 pos; float ang,hp,fireCd,vy; float aware; int alive,state,cryT,cry; } Man;
 static Man foes[NF], pals[NP];
+static int foeMov[NF], palMov[NP];                 // currently walking (for leg animation)
+static Vector3 prvFoe[NF], prvPal[NP]; static int prvMovInit=0;
 
 // ---- LAN co-op storage (host-authoritative); methods defined further below ----
 typedef struct {
@@ -163,6 +165,10 @@ static Mine gMines[NMINE];
 typedef struct { Vector3 pos; float yaw, hp; int alive, fireFlare; float cd; } ETank;
 static ETank gTank;
 static int   gInTank=0; static float gTankCd=0, gTankTur=0;
+// our own drivable cargo truck (available from the start, unlike the enemy tank
+// which must first be knocked out and captured). gDriveKind: 1=tank, 2=truck.
+static int   gDriveKind=0;
+static Vector3 gCarPos; static float gCarYaw=0;
 static float gVehArmor=0;    // while mounted: first 50 dmg is absorbed by the hull
 static float gRunCd=0;       // throttle for running foes over
 static int touchSprint=0;    // mobile: left stick pushed to the outer ring = sprint
@@ -288,6 +294,10 @@ static void spawnBattle(void)
     float wx=-18.0f, wz=118.0f;
     wound=(Man){0}; wound.pos=(Vector3){wx,Terrain_Height(wx,wz),wz};
     wound.ang=0.4f; wound.hp=30; wound.alive=1;
+    // seed the displacement trackers so the first frame doesn't read everyone as walking
+    for(int i=0;i<NF;i++){ prvFoe[i]=foes[i].pos; foeMov[i]=0; }
+    for(int i=0;i<NP;i++){ prvPal[i]=pals[i].pos; palMov[i]=0; }
+    prvMovInit=1;
 }
 
 static int foesAlive(void){int n=0;for(int i=0;i<NF;i++)if(foes[i].alive)n++;return n;}
@@ -939,7 +949,8 @@ static void updatePlayer(float dt)
     if(eye.y<gy){eye.y=gy; if(pvel.y<=0.0f){pvel.y=0; jumps=0;}}
     // glue the feet to the ground when not airborne: no sinking / seeing under
     if(jumps==0 && eye.y>gy+0.05f) eye.y=gy;
-    if(gInTank){ eye=(Vector3){gTank.pos.x,gTank.pos.y+4.3f,gTank.pos.z}; pvel.x=pvel.y=pvel.z=0; }
+    if(gInTank){ Vector3 vp=(gDriveKind==1)?gTank.pos:gCarPos; float sh=(gDriveKind==1)?4.3f:3.0f;
+        eye=(Vector3){vp.x,vp.y+sh,vp.z}; pvel.x=pvel.y=pvel.z=0; }
     if(fabsf(eye.x)>WORLD_HALF-10)eye.x=WORLD_HALF-10;
     if(fabsf(eye.z)>WORLD_HALF-10)eye.z=WORLD_HALF-10;
     // footstep cadence while actually moving on the ground
@@ -1499,19 +1510,24 @@ static void drawNetBodies(void)
         {
             // av.pos.y is EYE height (ground + 1.68); DrawSoldier expects feet.
             Vector3 bp={av[id].pos.x,av[id].pos.y-1.68f,av[id].pos.z};
-            if(av[id].alive) DrawSoldier(bp,-av[id].yaw,0,1.0f,1,gAnimClock*9.0f+id*1.7f);
+            int moving=(av[id].vel.x*av[id].vel.x+av[id].vel.z*av[id].vel.z)>1.2f;
+            if(av[id].alive) DrawSoldier(bp,-av[id].yaw,0,1.0f,1,gAnimClock*9.0f+id*1.7f,moving);
             else DrawSoldierDown(bp,av[id].yaw,0,1.0f);
         }
     }
     else if(gCoopRole==2 && gHaveSnap)
     {
+        static Vector3 sPrevP[BNET_MAXPLY]; static int sHaveP[BNET_MAXPLY];
         for(int i=0;i<gSnap.plyN;i++)
         {
             BnPlayer*p=&gSnap.players[i];
             if(p->id==(uint8_t)gCoopId)continue;   // never draw yourself
             Vector3 pp={p->x,p->y-1.68f,p->z};
             float ya=p->yawC/1000.0f;
-            if(p->state==1) DrawSoldier(pp,-ya,0,1.0f,1,gAnimClock*9.0f+p->id*1.7f);
+            int moving=0;
+            if(sHaveP[p->id]){ Vector3 d=vsub(pp,sPrevP[p->id]); moving=(d.x*d.x+d.z*d.z)>0.0009f; }
+            sPrevP[p->id]=pp; sHaveP[p->id]=1;
+            if(p->state==1) DrawSoldier(pp,-ya,0,1.0f,1,gAnimClock*9.0f+p->id*1.7f,moving);
             else DrawSoldierDown(pp,ya,0,1.0f);
         }
     }
@@ -1525,7 +1541,8 @@ static const float MINE_PT[NMINE][2]={
 
 static void warReset(void)
 {
-    gInTank=0; gVehArmor=0; gRunCd=0; gTankCd=0; gTankTur=0; gShake=0; gJetNext=14.0f; gJet.on=0; gJet.bombed=0;
+    gInTank=0; gDriveKind=0; gVehArmor=0; gRunCd=0; gTankCd=0; gTankTur=0; gShake=0; gJetNext=14.0f; gJet.on=0; gJet.bombed=0;
+    gCarPos=(Vector3){9,Terrain_Height(9,150),150}; gCarYaw=0;   // our truck by the start line, nose to the enemy
     buildTrees();
     gTank=(ETank){(Vector3){70,Terrain_Height(70,-330),-330},M_PI,120.0f,1,0,4.0f};
     for(int i=0;i<NMINE;i++)
@@ -1600,23 +1617,30 @@ void tankToggleMount(void)
 {
     if(gSelfTest)return;
     if(gInTank)
-    {   // bail out beside the hull
-        gInTank=0; jumps=0;
-        eye.x=gTank.pos.x+3.2f; eye.z=gTank.pos.z;
+    {   // bail out beside the hull of whichever vehicle we're in
+        Vector3 vp=(gDriveKind==1)?gTank.pos:gCarPos;
+        gInTank=0; gDriveKind=0; jumps=0;
+        eye.x=vp.x+3.2f; eye.z=vp.z;
         eye.y=Terrain_Height(eye.x,eye.z)+1.68f;
         return;
     }
-    if(gTank.alive)return;                    // crew still alive — can't take it
+    // our own truck is always drivable and takes priority when you're beside it
+    float dCar=vlen((Vector3){eye.x-gCarPos.x,0,eye.z-gCarPos.z});
+    if(dCar<4.8f){ gInTank=1; gDriveKind=2; gVehArmor=50.0f; gRunCd=0; return; }
+    // a knocked-out enemy tank can be captured and used
+    if(gTank.alive)return;
     float dd=vlen((Vector3){eye.x-gTank.pos.x,0,eye.z-gTank.pos.z});
-    if(dd<4.6f){ gInTank=1; gVehArmor=50.0f; gRunCd=0; }   // 登车：车体先扛 50 点
+    if(dd<4.6f){ gInTank=1; gDriveKind=1; gVehArmor=50.0f; gRunCd=0; }
 }
 
 // UI hint for the dedicated on-screen 车 button: lit while mounted (dismount)
-// or standing next to a wrecked, drivable enemy vehicle (mount).
+// or standing next to our truck / a wrecked, drivable enemy vehicle.
 int Ground_VehiclePrompt(void)
 {
     if(gSelfTest)return 0;
     if(gInTank)return 1;
+    float dCar=vlen((Vector3){eye.x-gCarPos.x,0,eye.z-gCarPos.z});
+    if(dCar<4.8f)return 1;
     if(gTank.alive)return 0;
     float dd=vlen((Vector3){eye.x-gTank.pos.x,0,eye.z-gTank.pos.z});
     return dd<4.6f;
@@ -1661,37 +1685,41 @@ static void warUpdate(float dt)
 
     if(gInTank)
     {
-        // drive: W/S throttle, A/D steer the hull; turret follows the view
+        // currently driven vehicle: captured enemy tank (kind 1) or our truck (2)
+        Vector3* vp =(gDriveKind==1)?&gTank.pos:&gCarPos;
+        float*   vyp=(gDriveKind==1)?&gTank.yaw:&gCarYaw;
+        float drvSp=(gDriveKind==1)?12.0f:15.0f, ramR=(gDriveKind==1)?3.4f:3.0f;
+        // drive: W/S throttle, A/D steer the hull; turret (tank) follows the view
         float thr=0;
         if(IsKeyDown(KEY_W))thr+=1; if(IsKeyDown(KEY_S))thr-=1;
         float ax=Touch_AxisX(), ay=Touch_AxisY();
-        if(fabsf(ax)>0.05f||fabsf(ay)>0.05f){ gTank.yaw-=ax*1.6f*dt; thr+=-ay; }
-        if(IsKeyDown(KEY_A))gTank.yaw-=1.35f*dt;
-        if(IsKeyDown(KEY_D))gTank.yaw+=1.35f*dt;
-        gTankTur=yaw;   // turret aims where the player looks
-        Vector3 fwd=tankFwd();
-        float sp=12.0f;
-        Vector3 wish=vmul(fwd,thr*sp);
-        float ox=gTank.pos.x, oz=gTank.pos.z;
-        float nx=gTank.pos.x+wish.x*dt, nz=gTank.pos.z+wish.z*dt;
-        if(Terrain_Height(nx,nz)<=Terrain_Height(gTank.pos.x,gTank.pos.z)+2.0f)
-        { gTank.pos.x=nx; gTank.pos.z=nz; }
-        gTank.pos.x=clampf(gTank.pos.x,-WORLD_HALF+10,WORLD_HALF-10);
-        gTank.pos.z=clampf(gTank.pos.z,-WORLD_HALF+10,WORLD_HALF-10);
-        gTank.pos.y=Terrain_Height(gTank.pos.x,gTank.pos.z);
-        // 高速冲撞：车开过去，沿途敌人成片撞倒（必须真的在移动，避免原地误杀）
-        float moved=sqrtf((gTank.pos.x-ox)*(gTank.pos.x-ox)+(gTank.pos.z-oz)*(gTank.pos.z-oz));
-        if(moved>sp*dt*0.55f) for(int j=0;j<NF;j++) if(foes[j].alive)
+        if(fabsf(ax)>0.05f||fabsf(ay)>0.05f){ *vyp-=ax*1.6f*dt; thr+=-ay; }
+        if(IsKeyDown(KEY_A))*vyp-=1.35f*dt;
+        if(IsKeyDown(KEY_D))*vyp+=1.35f*dt;
+        if(gDriveKind==1) gTankTur=yaw;   // only the tank has a rotating turret
+        Vector3 fwd=(Vector3){sinf(*vyp),0,cosf(*vyp)};
+        float ox=vp->x, oz=vp->z;
+        float nx=vp->x+fwd.x*thr*drvSp*dt, nz=vp->z+fwd.z*thr*drvSp*dt;
+        if(Terrain_Height(nx,nz)<=Terrain_Height(vp->x,vp->z)+2.0f)
+        { vp->x=nx; vp->z=nz; }
+        vp->x=clampf(vp->x,-WORLD_HALF+10,WORLD_HALF-10);
+        vp->z=clampf(vp->z,-WORLD_HALF+10,WORLD_HALF-10);
+        vp->y=Terrain_Height(vp->x,vp->z);
+        // high-speed ramming: only while genuinely moving, scythe through infantry
+        float moved=sqrtf((vp->x-ox)*(vp->x-ox)+(vp->z-oz)*(vp->z-oz));
+        if(moved>drvSp*dt*0.55f) for(int j=0;j<NF;j++) if(foes[j].alive)
         {
-            float rd=vlen((Vector3){foes[j].pos.x-gTank.pos.x,0,foes[j].pos.z-gTank.pos.z});
-            if(rd<3.4f){ FX_Blood((Vector3){foes[j].pos.x,foes[j].pos.y+1.1f,foes[j].pos.z});
-                         addBlood(foes[j].pos); killFoe(j,1,"军车冲撞 · 横扫毙敌"); }
+            float rd=vlen((Vector3){foes[j].pos.x-vp->x,0,foes[j].pos.z-vp->z});
+            if(rd<ramR){ FX_Blood((Vector3){foes[j].pos.x,foes[j].pos.y+1.1f,foes[j].pos.z});
+                         addBlood(foes[j].pos); killFoe(j,1,(gDriveKind==1)?"坦克冲撞 · 横扫毙敌":"军车冲撞 · 横扫毙敌"); }
         }
         gTankCd-=dt;
-        if(!gSelfTest && gTankCd<=0 && (IsMouseButtonDown(MOUSE_BUTTON_LEFT)||Touch_FireHeld()))
+        // only the captured tank fires its cannon; the truck rams only (its fire
+        // button must not lob a shell), so mobile players don't misfire either.
+        if(gDriveKind==1 && !gSelfTest && gTankCd<=0 && (IsMouseButtonDown(MOUSE_BUTTON_LEFT)||Touch_FireHeld()))
         {
             gTankCd=2.3f;
-            Vector3 mz=(Vector3){gTank.pos.x,gTank.pos.y+2.1f,gTank.pos.z};
+            Vector3 mz=(Vector3){vp->x,vp->y+2.1f,vp->z};
             Vector3 dir=vnorm(aimDir());
             // shells lob slightly downward toward ground range
             tankFire(mz,dir,1,1);
@@ -1788,6 +1816,17 @@ static void warDraw(void)
     DrawBlobShadow(gTank.pos,3.6f);
     // enemy / captured tank (slightly enlarged model)
     DrawVehicle((Vector3){gTank.pos.x,gTank.pos.y,gTank.pos.z}, gTank.yaw, 2, 1.55f);
+    // OUR drivable cargo truck, parked at the start line and carried with the driver
+    DrawBlobShadow(gCarPos,2.6f);
+    DrawVehicle((Vector3){gCarPos.x,gCarPos.y,gCarPos.z}, gCarYaw, 0, 1.25f);
+    if(!gInTank){
+        float dCar3=vlen((Vector3){eye.x-gCarPos.x,0,eye.z-gCarPos.z});
+        if(dCar3<12.0f){   // bobbing yellow marker so the drivable truck is obvious
+            float by=gCarPos.y+4.6f+sinf(timeAlive*3.0f)*0.25f;
+            DrawPart(P_CONE,C_YELLOW,MatrixIdentity(),
+                MPart((Vector3){gCarPos.x,by,gCarPos.z},(Vector3){0,1,0},M_PI,(Vector3){0.55f,1.0f,0.55f}));
+        }
+    }
     // the strafing Sabre
     if(gJet.on)
     {
@@ -1881,6 +1920,12 @@ void Ground_Run(int *outMode,int *outEnding)
                 Net_RelayTick(dt);
                 if(gCoopRole==1) netHostRecv(dt);
                 updatePlayer(dt); updateFoes(dt); updatePals(dt); warUpdate(dt);
+                // derive a walking flag from per-frame ground displacement so the
+                // new two-segment leg animation only plays while a man actually moves
+                for(int i=0;i<NF;i++){ if(foes[i].alive){ Vector3 d=vsub(foes[i].pos,prvFoe[i]);
+                    foeMov[i]=(d.x*d.x+d.z*d.z)>0.00045f; prvFoe[i]=foes[i].pos; } else foeMov[i]=0; }
+                for(int i=0;i<NP;i++){ if(pals[i].alive){ Vector3 d=vsub(pals[i].pos,prvPal[i]);
+                    palMov[i]=(d.x*d.x+d.z*d.z)>0.00045f; prvPal[i]=pals[i].pos; } else palMov[i]=0; }
                 if(gCoopRole==1) netHostSend(celebrate>0?1:0);
                 FX_Update(dt); battleFX(dt); Env_Update(dt); kfUpdate(dt); if(introT>0)introT-=dt;
                 // distant, off-screen battle: random booms and smoke over the ridge
@@ -1952,8 +1997,20 @@ void Ground_Run(int *outMode,int *outEnding)
         // degrees and the Five-star Red Flag is hoisted (DrawObjectiveFlags).
         float gy=Terrain_Height(OBJV.x,OBJV.z);
         DrawObjectiveFlags(cam,(Vector3){OBJV.x,gy,OBJV.z},planted,objFall,timeAlive);
-        // sandbag cover
-        for(int i=0;i<6;i++){ float x=-60+i*24; float z=-260-((i%2)*20); DrawPart(P_BOX,C_SAND,MatrixIdentity(),MPart((Vector3){x,Terrain_Height(x,z)+0.5f,z},(Vector3){0,1,0},i*0.4f,(Vector3){4,1,1.2f})); }
+        // sandbag breastworks: dark olive, staggered two-layer sacks (the old
+        // single 4x1x1 sand-coloured blocks read as big yellow bricks)
+        for(int i=0;i<7;i++)
+        {
+            float x=-72+i*24, z=-262-((i%2)*18);
+            for(int lyr=0;lyr<2;lyr++)
+            for(int s2=-1;s2<=1;s2++)
+            {
+                float ox=s2*1.5f+(lyr?0.75f:0.0f);
+                float yy=Terrain_Height(x,z)+0.28f+lyr*0.5f;
+                DrawPart(P_BOX,C_DARKOLIVE,MatrixIdentity(),
+                    MPart((Vector3){x+ox,yy,z},(Vector3){0,1,0},i*0.4f,(Vector3){1.7f,0.5f,0.95f}));
+            }
+        }
         // wrecked truck decoys
         DrawVehicle((Vector3){-90, Terrain_Height(-90,-60), -60}, 0.6f, 0, 1.0f);
         DrawVehicle((Vector3){110, Terrain_Height(110,-120), -120}, 2.2f, 2, 1.0f);
@@ -1975,8 +2032,8 @@ void Ground_Run(int *outMode,int *outEnding)
         for(int i=0;i<NP;i++)if(!pals[i].alive&&pals[i].state==9) DrawSoldierDown(pals[i].pos,pals[i].ang,0,1.0f);
         // wounded comrade you can talk to
         if(woundOn) DrawSoldierDown(wound.pos,wound.ang,0,1.0f);
-        for(int i=0;i<NF;i++)if(foes[i].alive){ DrawBlobShadow(foes[i].pos,1.05f); DrawSoldier(foes[i].pos,-foes[i].ang,1,1.0f,1,timeAlive*9.0f+i*1.3f); }
-        for(int i=0;i<NP;i++)if(pals[i].alive){ DrawBlobShadow(pals[i].pos,1.05f); DrawSoldier(pals[i].pos,-pals[i].ang,0,1.0f,1,timeAlive*9.0f+i*1.3f); }
+        for(int i=0;i<NF;i++)if(foes[i].alive){ DrawBlobShadow(foes[i].pos,1.05f); DrawSoldier(foes[i].pos,-foes[i].ang,1,1.0f,1,timeAlive*9.0f+i*1.3f,foeMov[i]); }
+        for(int i=0;i<NP;i++)if(pals[i].alive){ DrawBlobShadow(pals[i].pos,1.05f); DrawSoldier(pals[i].pos,-pals[i].ang,0,1.0f,1,timeAlive*9.0f+i*1.3f,palMov[i]); }
         drawNetBodies();   // other real co-op players
         // grenade in flight + charging arc preview
         if(gre.on) DrawGrenadeModel(gre.p,gre.age*10.0f);
@@ -2018,12 +2075,17 @@ void Ground_Run(int *outMode,int *outEnding)
         if(paused) Touch_DrawPauseMenu();
         else {
             drawHud(); drawKillFeed(); drawScope(); drawNetNames(); Touch_DrawHUD(); drawTalk();
-            if(gInTank) CNC("坦克：W/S 行驶 · A/D 转向 · 鼠标/火 开炮 · F / “话”下车",
+            if(gInTank) CNC((gDriveKind==1)
+                    ? "坦克：W/S 行驶 · A/D 转向 · 鼠标/火 开炮 · F（手机“车”）下车"
+                    : "军车：W/S 行驶 · A/D 转向 · 可高速冲撞敌人 · F（手机“车”）下车",
                 GetScreenWidth()/2,GetScreenHeight()-26,16,(Color){255,230,170,235});
-            else if(!gTank.alive && gCoopRole!=2)
-            { float td=vlen((Vector3){eye.x-gTank.pos.x,0,eye.z-gTank.pos.z});
-              if(td<4.6f) CNC("敌坦克已被击毁 —— 按 F（手机点“话”）登车驾驶",
-                GetScreenWidth()/2,GetScreenHeight()-58,17,(Color){255,220,150,255}); }
+            else if(gCoopRole!=2)
+            { float dCarH=vlen((Vector3){eye.x-gCarPos.x,0,eye.z-gCarPos.z});
+              if(dCarH<4.8f) CNC("我方军车 —— 按 F（手机点“车”）上车驾驶，可冲撞敌人",
+                  GetScreenWidth()/2,GetScreenHeight()-58,17,(Color){255,220,150,255});
+              else if(!gTank.alive){ float td=vlen((Vector3){eye.x-gTank.pos.x,0,eye.z-gTank.pos.z});
+              if(td<4.6f) CNC("敌坦克已被击毁 —— 按 F（手机点“车”）登车驾驶",
+                GetScreenWidth()/2,GetScreenHeight()-58,17,(Color){255,220,150,255}); } }
         }
         EndDrawing();
         if(gSelfTest && gCoopRole==0){
@@ -2062,10 +2124,13 @@ void Ground_Run(int *outMode,int *outEnding)
         }
         else if(!gRpgMode && gCoopRole!=2 && celebrate<=0)
         {
-            // Take the hill: stand on the objective with the garrison broken
-            // (annihilated, or routed to a remnant <=12) and hold it 4.5 s.
-            if(nearObj && fa<=12) holdT+=dt; else holdT=0;
-            if((fa==0 && nearObj) || holdT>=4.5f)
+            // Wipe out the garrison and the battle is won outright — the player no
+            // longer has to run to the hilltop after killing every enemy (the old
+            // near-objective requirement made a total clear not register as a win).
+            // Otherwise, break the garrison to a remnant (<=12) and HOLD the point.
+            if(fa==0) holdT=4.5f;
+            else if(nearObj && fa<=12) holdT+=dt; else holdT=0;
+            if(fa==0 || holdT>=4.5f)
             {
                 celebrate=3.4f;
                 if(pals[0].alive) planter=0;                       // squad leader first

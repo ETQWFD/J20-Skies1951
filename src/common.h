@@ -80,7 +80,7 @@ void   DrawPart(int shape, int color, Matrix parent, Matrix local);
 void   DrawParts(int shape, int color, Matrix parent, const Matrix* locals, int n);
 void   DrawJ20(Vector3 pos, Quaternion q, float scale, int insignia);
 void   DrawSabre(Vector3 pos, Quaternion q, float scale);
-void   DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp, float phase);
+void   DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp, float phase, int moving);
 void   DrawSoldierDown(Vector3 feet, float yaw, int uniform, float scale);
 void   DrawVehicle(Vector3 pos, float yaw, int kind, float scale);
 void   DrawBlobShadow(Vector3 feet, float radius);
