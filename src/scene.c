@@ -443,13 +443,14 @@ void DrawSoldierDown(Vector3 feet, float yaw, int uniform, float scale)
     Matrix M=root(feet,q,scale);
     int body = uniform==1 ? C_GI : (uniform==2 ? C_WHITE : C_PVA);
     int leg  = uniform==2 ? C_WHITE : C_DARKOLIVE;
-    DrawPart(P_BOX,leg,M,MPart((Vector3){-0.13f,0.18f,-0.62f},(Vector3){1,0,0},0,(Vector3){0.17f,0.26f,1.0f}));
-    DrawPart(P_BOX,leg,M,MPart((Vector3){ 0.13f,0.18f,-0.62f},(Vector3){1,0,0},0,(Vector3){0.17f,0.26f,1.0f}));
-    DrawPart(P_BOX,body,M,MPart((Vector3){0,0.24f,0.22f},(Vector3){1,0,0},0,(Vector3){0.54f,0.32f,0.78f}));
-    DrawPart(P_BOX,body,M,MPart((Vector3){-0.34f,0.2f,0.1f},(Vector3){1,0,0},0,(Vector3){0.15f,0.18f,0.7f}));
-    DrawPart(P_BOX,body,M,MPart((Vector3){ 0.34f,0.2f,0.1f},(Vector3){1,0,0},0,(Vector3){0.15f,0.18f,0.7f}));
-    DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){0,0.26f,0.8f},(Vector3){0,1,0},0,(Vector3){0.3f,0.28f,0.3f}));
-    if(uniform==1) DrawPart(P_SPHERE,C_HELMET,M,MPart((Vector3){0,0.34f,0.8f},(Vector3){1,0,0},0,(Vector3){0.36f,0.14f,0.36f}));
+    // dropped ~0.06 so the lowest parts rest on the terrain instead of floating
+    DrawPart(P_BOX,leg,M,MPart((Vector3){-0.13f,0.12f,-0.62f},(Vector3){1,0,0},0,(Vector3){0.17f,0.26f,1.0f}));
+    DrawPart(P_BOX,leg,M,MPart((Vector3){ 0.13f,0.12f,-0.62f},(Vector3){1,0,0},0,(Vector3){0.17f,0.26f,1.0f}));
+    DrawPart(P_BOX,body,M,MPart((Vector3){0,0.18f,0.22f},(Vector3){1,0,0},0,(Vector3){0.54f,0.32f,0.78f}));
+    DrawPart(P_BOX,body,M,MPart((Vector3){-0.34f,0.14f,0.1f},(Vector3){1,0,0},0,(Vector3){0.15f,0.18f,0.7f}));
+    DrawPart(P_BOX,body,M,MPart((Vector3){ 0.34f,0.14f,0.1f},(Vector3){1,0,0},0,(Vector3){0.15f,0.18f,0.7f}));
+    DrawPart(P_SPHERE,C_SKIN,M,MPart((Vector3){0,0.20f,0.8f},(Vector3){0,1,0},0,(Vector3){0.3f,0.28f,0.3f}));
+    if(uniform==1) DrawPart(P_SPHERE,C_HELMET,M,MPart((Vector3){0,0.28f,0.8f},(Vector3){1,0,0},0,(Vector3){0.36f,0.14f,0.36f}));
 }
 
 // --------------------------------------------------------------- missile / bomb

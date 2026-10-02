@@ -1512,7 +1512,7 @@ static void drawNetBodies(void)
             Vector3 bp={av[id].pos.x,av[id].pos.y-1.68f,av[id].pos.z};
             int moving=(av[id].vel.x*av[id].vel.x+av[id].vel.z*av[id].vel.z)>1.2f;
             if(av[id].alive) DrawSoldier(bp,-av[id].yaw,0,1.0f,1,gAnimClock*9.0f+id*1.7f,moving);
-            else DrawSoldierDown(bp,av[id].yaw,0,1.0f);
+            else DrawSoldierDown((Vector3){bp.x,Terrain_Height(bp.x,bp.z),bp.z},av[id].yaw,0,1.0f);
         }
     }
     else if(gCoopRole==2 && gHaveSnap)
@@ -1528,7 +1528,7 @@ static void drawNetBodies(void)
             if(sHaveP[p->id]){ Vector3 d=vsub(pp,sPrevP[p->id]); moving=(d.x*d.x+d.z*d.z)>0.0009f; }
             sPrevP[p->id]=pp; sHaveP[p->id]=1;
             if(p->state==1) DrawSoldier(pp,-ya,0,1.0f,1,gAnimClock*9.0f+p->id*1.7f,moving);
-            else DrawSoldierDown(pp,ya,0,1.0f);
+            else DrawSoldierDown((Vector3){pp.x,Terrain_Height(pp.x,pp.z),pp.z},ya,0,1.0f);
         }
     }
 }
@@ -1647,7 +1647,7 @@ int Ground_VehiclePrompt(void)
 }
 int Ground_InVehicle(void){ return gInTank; }
 
-static Vector3 tankFwd(void){ return (Vector3){sinf(gTank.yaw),0,cosf(gTank.yaw)}; }
+static Vector3 tankFwd(void){ return flatFwd(gTank.yaw); }
 
 static void drawEnemyJet(Vector3 p,float yy)
 {
@@ -1685,19 +1685,27 @@ static void warUpdate(float dt)
 
     if(gInTank)
     {
-        // currently driven vehicle: captured enemy tank (kind 1) or our truck (2)
+        // currently driven vehicle: captured enemy tank (kind 1) or our truck (2).
+        // Single heading convention everywhere: hull forward = flatFwd(heading) =
+        // (sin,0,-cos); the model is rendered at -heading (its local nose is -Z),
+        // so the visible nose points exactly where W drives. The hull heading is
+        // INDEPENDENT of the free-look camera yaw:
+        //   W/S (or left-stick Y) = throttle along the hull,
+        //   A/D (or left-stick X) = steer the hull,
+        //   mouse / right-screen drag = free look; the captured tank's turret/cannon
+        //   still aims with the view (tankFire uses aimDir()).
         Vector3* vp =(gDriveKind==1)?&gTank.pos:&gCarPos;
-        float*   vyp=(gDriveKind==1)?&gTank.yaw:&gCarYaw;
+        float*   vh =(gDriveKind==1)?&gTank.yaw:&gCarYaw;
         float drvSp=(gDriveKind==1)?12.0f:15.0f, ramR=(gDriveKind==1)?3.4f:3.0f;
-        // drive: W/S throttle, A/D steer the hull; turret (tank) follows the view
         float thr=0;
         if(IsKeyDown(KEY_W))thr+=1; if(IsKeyDown(KEY_S))thr-=1;
-        float ax=Touch_AxisX(), ay=Touch_AxisY();
-        if(fabsf(ax)>0.05f||fabsf(ay)>0.05f){ *vyp-=ax*1.6f*dt; thr+=-ay; }
-        if(IsKeyDown(KEY_A))*vyp-=1.35f*dt;
-        if(IsKeyDown(KEY_D))*vyp+=1.35f*dt;
-        if(gDriveKind==1) gTankTur=yaw;   // only the tank has a rotating turret
-        Vector3 fwd=(Vector3){sinf(*vyp),0,cosf(*vyp)};
+        if(IsKeyDown(KEY_A))*vh-=1.35f*dt;   // left  -> hull turns left
+        if(IsKeyDown(KEY_D))*vh+=1.35f*dt;   // right -> hull turns right
+        float ax=Touch_AxisX(), ay=Touch_AxisY();   // left stick only
+        if(fabsf(ax)>0.05f)*vh+=ax*1.6f*dt;          // push right -> steer right
+        if(fabsf(ay)>0.05f)thr+=-ay;                 // push up    -> forward
+        if(gDriveKind==1) gTankTur=yaw;     // tank turret follows free-look aim
+        Vector3 fwd=flatFwd(*vh);
         float ox=vp->x, oz=vp->z;
         float nx=vp->x+fwd.x*thr*drvSp*dt, nz=vp->z+fwd.z*thr*drvSp*dt;
         if(Terrain_Height(nx,nz)<=Terrain_Height(vp->x,vp->z)+2.0f)
@@ -1735,10 +1743,8 @@ static void warUpdate(float dt)
         { float d=vlen(vsub(pals[i].pos,origin)); if(d<bd){bd=d;tgt=pals[i].pos;have=1;} }
         if(have && bd<480)
         {
-            Vector3 want=(Vector3){sinf(atan2f(tgt.x-gTank.pos.x,tgt.z-gTank.pos.z)),0,
-                                   cosf(atan2f(tgt.x-gTank.pos.x,tgt.z-gTank.pos.z))};
-            (void)want;
-            gTank.yaw=atan2f(tgt.x-gTank.pos.x,tgt.z-gTank.pos.z);
+            // face the target under the SAME flatFwd convention the model uses
+            gTank.yaw=angTo(gTank.pos,tgt);
             gTank.cd-=dt;
             if(gTank.cd<=0 && los(origin,(Vector3){tgt.x,tgt.y+1.2f,tgt.z}))
             {
@@ -1815,10 +1821,10 @@ static void warDraw(void)
     // contact shadows under the tank
     DrawBlobShadow(gTank.pos,3.6f);
     // enemy / captured tank (slightly enlarged model)
-    DrawVehicle((Vector3){gTank.pos.x,gTank.pos.y,gTank.pos.z}, gTank.yaw, 2, 1.55f);
+    DrawVehicle((Vector3){gTank.pos.x,gTank.pos.y,gTank.pos.z}, -gTank.yaw, 2, 1.55f);
     // OUR drivable cargo truck, parked at the start line and carried with the driver
     DrawBlobShadow(gCarPos,2.6f);
-    DrawVehicle((Vector3){gCarPos.x,gCarPos.y,gCarPos.z}, gCarYaw, 0, 1.25f);
+    DrawVehicle((Vector3){gCarPos.x,gCarPos.y,gCarPos.z}, -gCarYaw, 0, 1.25f);
     if(!gInTank){
         float dCar3=vlen((Vector3){eye.x-gCarPos.x,0,eye.z-gCarPos.z});
         if(dCar3<12.0f){   // bobbing yellow marker so the drivable truck is obvious
@@ -2024,14 +2030,21 @@ void Ground_Run(int *outMode,int *outEnding)
         for(int i=0;i<NBURN;i++){ float bx=BURN_PT[i][0],bz=BURN_PT[i][1];
             DrawPart(P_CYL,C_DARK,MatrixIdentity(),
                 MPart((Vector3){bx,Terrain_Height(bx,bz)+0.05f,bz},(Vector3){0,1,0},i*0.7f,(Vector3){4.0f+(i%3),0.02f,4.0f+(i%3)})); }
-        // restrained dark stains where men fell
-        for(int i=0;i<MAXBLD;i++)if(blds[i].on)
+        // restrained dark stains where men fell — re-pinned to the ground every
+        // frame so a pool never floats on a slope or after a terrain transition
+        for(int i=0;i<MAXBLD;i++)if(blds[i].on){
+            blds[i].p.y=Terrain_Height(blds[i].p.x,blds[i].p.z)+0.02f;
             DrawPart(P_CYL,C_BLOOD,MatrixIdentity(),MPart(blds[i].p,(Vector3){0,1,0},blds[i].rot,(Vector3){blds[i].r,0.02f,blds[i].r}));
-        // fallen soldiers (both sides lie on the ground; no dismemberment)
-        for(int i=0;i<NF;i++)if(!foes[i].alive&&foes[i].state==9) DrawSoldierDown(foes[i].pos,foes[i].ang,1,1.0f);
-        for(int i=0;i<NP;i++)if(!pals[i].alive&&pals[i].state==9) DrawSoldierDown(pals[i].pos,pals[i].ang,0,1.0f);
+        }
+        // fallen soldiers (both sides lie ON the ground; feet re-pinned to terrain;
+        // no dismemberment). A dead man's stored y can be stale (e.g. network bodies
+        // store eye-height), which previously left corpses floating in the air.
+        for(int i=0;i<NF;i++)if(!foes[i].alive&&foes[i].state==9)
+            DrawSoldierDown((Vector3){foes[i].pos.x,Terrain_Height(foes[i].pos.x,foes[i].pos.z),foes[i].pos.z},foes[i].ang,1,1.0f);
+        for(int i=0;i<NP;i++)if(!pals[i].alive&&pals[i].state==9)
+            DrawSoldierDown((Vector3){pals[i].pos.x,Terrain_Height(pals[i].pos.x,pals[i].pos.z),pals[i].pos.z},pals[i].ang,0,1.0f);
         // wounded comrade you can talk to
-        if(woundOn) DrawSoldierDown(wound.pos,wound.ang,0,1.0f);
+        if(woundOn) DrawSoldierDown((Vector3){wound.pos.x,Terrain_Height(wound.pos.x,wound.pos.z),wound.pos.z},wound.ang,0,1.0f);
         for(int i=0;i<NF;i++)if(foes[i].alive){ DrawBlobShadow(foes[i].pos,1.05f); DrawSoldier(foes[i].pos,-foes[i].ang,1,1.0f,1,timeAlive*9.0f+i*1.3f,foeMov[i]); }
         for(int i=0;i<NP;i++)if(pals[i].alive){ DrawBlobShadow(pals[i].pos,1.05f); DrawSoldier(pals[i].pos,-pals[i].ang,0,1.0f,1,timeAlive*9.0f+i*1.3f,palMov[i]); }
         drawNetBodies();   // other real co-op players
