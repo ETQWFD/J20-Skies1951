@@ -190,6 +190,8 @@ int   Touch_IsTouch(void);
 
 // battle scenario: 0 = generic ridge assault, 1 = Chosin Reservoir / Ice Company
 extern int gScenario;
+// RPG-7 anti-tank standalone mode (armed via the top menu button)
+extern int gRpgMode;
 int  Map_IsNight(void);
 int  Map_IsSnow(void);
 int  Map_IsScorch(void);

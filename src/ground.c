@@ -91,6 +91,16 @@ static void drawKillFeed(void)
 static Vector3 eye, pvel; static float yaw,pitch; static float hp;
 static int weapon, mag[2], reserve[2], reloadTake, reload, foesKilled;
 static float fireCd;
+// ---- RPG-7 anti-tank mode (menu "RPG·反坦克") ----
+int   gRpgMode=0;                 // set before Ground_Run for the AT scenario
+static int   rpgLoaded=0, rpgReserve=0;  // one round in the tube + carried rounds
+static float rpgReload=0, rpgFireCd=0;   // rear-load animation timer / refire lock
+typedef struct { Vector3 p,v; int on; float age; } Rok;
+static Rok gRok[4];                      // in-flight 73 mm rockets
+typedef struct { Vector3 pos; float yaw,hp; int kind,alive,burn; } Armor;
+#define NARM 7
+static Armor gArm[NARM];
+static int armorAlive(void){ int n=0; for(int i=0;i<NARM;i++) if(gArm[i].alive)n++; return n; }
 static float meleeCd=0, meleeSwing=0;        // broadsword / fists
 static int   grenades=1;                     // one grenade each man carries
 typedef struct { Vector3 p,v; int on,landed; float age; } Gre;
@@ -448,6 +458,118 @@ static void updateGrenade(float dt)
     if(gre.age>=2.5f)explodeGrenade();
 }
 
+// ============================================================ RPG-7 anti-tank
+#define ROK_SPEED 56.0f
+static void killArmor(Armor* a)
+{
+    a->alive=0; a->hp=0; a->burn=1;
+    Vector3 bp=(Vector3){a->pos.x,Terrain_Height(a->pos.x,a->pos.z)+1.3f,a->pos.z};
+    FX_Explosion(bp,3.0f); FX_Fireball(bp,2.2f); FX_Smoke(bp,2.6f); Sfx_Boom(1.0f); gShake=1.0f;
+}
+static void explodeRpg(Vector3 p)
+{
+    p.y=Terrain_Height(p.x,p.z)+0.7f;
+    FX_Explosion(p,2.7f); FX_Fireball(p,1.9f); FX_Smoke(p,2.6f); Sfx_Boom(1.0f);
+    float dc=vlen(vsub(p,cam.position)); if(dc<46.0f) gShake=fmaxf(gShake,1.1f*(1.0f-dc/46.0f));
+    // infantry inside the shaped-charge blast
+    for(int i=0;i<NF;i++)if(foes[i].alive)
+    { float d=vlen(vsub(foes[i].pos,p));
+      if(d<8.5f){ foes[i].hp-=160.0f*(1.0f-d/8.5f); if(foes[i].hp<=0)killFoe(i,1,"火箭弹轰毙美军士兵"); } }
+    // armoured targets: a direct/near hit knocks out a truck/AA; a tank needs a
+    // near-direct hit (its radius is tighter), matching a 73 mm HEAT warhead.
+    for(int i=0;i<NARM;i++)if(gArm[i].alive)
+    { float rad=(gArm[i].kind==2)?4.2f:3.4f;
+      float d=vlen(vsub(gArm[i].pos,p));
+      if(d<rad){ gArm[i].hp-=210.0f*(1.0f-d/(rad+1.5f)); if(gArm[i].hp<=0) killArmor(&gArm[i]); } }
+    // the roaming enemy tank can be knocked out the same way
+    if(gTank.alive)
+    { float d=vlen(vsub(gTank.pos,p));
+      if(d<4.2f){ gTank.hp-=180.0f*(1.0f-d/5.5f);
+        if(gTank.hp<=0){ gTank.alive=0; gTank.hp=0; gTank.fireFlare=1;
+            Vector3 bp=(Vector3){gTank.pos.x,gTank.pos.y+1.4f,gTank.pos.z};
+            FX_Explosion(bp,3.0f); FX_Fireball(bp,2.0f); Sfx_Boom(1.0f); gShake=1.0f; } } }
+    // backfire / friendly fire is real if a rocket lands short
+    if(hp>0){ float d=vlen((Vector3){eye.x-p.x,0,eye.z-p.z}); if(d<7.0f){ hurtPlayer((1.0f-d/7.0f)*95.0f); dmgCd=fmaxf(dmgCd,2.5f); } }
+    for(int i=0;i<NP;i++)if(pals[i].alive)
+    { float d=vlen(vsub(pals[i].pos,p));
+      if(d<6.5f){ pals[i].hp-=150.0f*(1.0f-d/6.5f); if(pals[i].hp<=0)killPal(i); } }
+}
+static void fireRpg(void)
+{
+    if(rpgReload>0||rpgFireCd>0||!rpgLoaded)return;
+    rpgLoaded=0; rpgFireCd=0.65f;
+    Vector3 d=aimDir();
+    Vector3 mz=vadd(eye,vadd(vmul(d,1.15f),(Vector3){0,-0.04f,0}));
+    for(int s=0;s<4;s++) if(!gRok[s].on){ gRok[s].on=1; gRok[s].age=0; gRok[s].p=mz; gRok[s].v=vmul(d,ROK_SPEED); break; }
+    FX_Muzzle(RifleMuzzle(cam,4)); FX_Smoke(mz,1.2f); Sfx_Boom(0.95f);
+    kickP+=0.075f; gunKick=1.0f;
+    // dangerous back-blast cone directly behind the gunner
+    Vector3 back=(Vector3){eye.x-d.x*3.2f,eye.y-0.2f,eye.z-d.z*3.2f};
+    FX_Smoke(back,1.6f);
+    for(int i=0;i<NP;i++)if(pals[i].alive)
+    { float dd=vlen(vsub(pals[i].pos,back)); if(dd<3.2f){ pals[i].hp-=30.0f*(1.0f-dd/3.2f); if(pals[i].hp<=0)killPal(i); } }
+}
+static void startRpgReload(void)
+{
+    if(rpgReload>0||rpgLoaded||rpgReserve<=0)return;
+    rpgReload=112.0f;   // ~1.9 s rear-load animation
+}
+static void drawRocketInFlight(Rok* rk)
+{
+    Vector3 d=vnorm(rk->v);
+    Quaternion q=QuaternionFromVector3ToVector3((Vector3){0,1,0},d);
+    Vector3 bc=vsub(rk->p,vmul(d,0.22f));
+    Matrix Mb=MatrixMultiply(MatrixScale(0.05f,0.62f,0.05f),
+               MatrixMultiply(QuaternionToMatrix(q),MatrixTranslate(bc.x,bc.y,bc.z)));
+    DrawPart(P_CYL,C_DARKOLIVE,MatrixIdentity(),Mb);
+    Matrix Mh=MatrixMultiply(MatrixScale(0.085f,0.15f,0.085f),
+               MatrixMultiply(QuaternionToMatrix(q),MatrixTranslate(rk->p.x,rk->p.y,rk->p.z)));
+    DrawPart(P_CONE,C_DARK,MatrixIdentity(),Mh);
+}
+static void updateRockets(float dt)
+{
+    for(int s=0;s<4;s++) if(gRok[s].on)
+    {
+        Rok* r=&gRok[s]; r->age+=dt;
+        r->v.y-=GRAVITY*0.10f*dt;                 // fin-stabilised, very flat arc
+        r->p=vadd(r->p,vmul(r->v,dt));
+        Vector3 d=vnorm(r->v);
+        FX_Smoke(vsub(r->p,vmul(d,0.4f)),0.55f);
+        if(((int)(r->age*40))%2==0) FX_EngineSmoke(r->p);
+        int hit=0;
+        if(r->p.y<=Terrain_Height(r->p.x,r->p.z)+0.12f) hit=1;
+        for(int i=0;i<NARM&&!hit;i++)if(gArm[i].alive)
+        { float rad=(gArm[i].kind==2)?3.4f:2.6f;
+          if(vlen((Vector3){r->p.x-gArm[i].pos.x,0,r->p.z-gArm[i].pos.z})<rad
+             && fabsf(r->p.y-(Terrain_Height(gArm[i].pos.x,gArm[i].pos.z)+1.3f))<2.4f) hit=1; }
+        if(!hit && gTank.alive &&
+           vlen((Vector3){r->p.x-gTank.pos.x,0,r->p.z-gTank.pos.z})<3.2f
+           && fabsf(r->p.y-(gTank.pos.y+1.3f))<2.6f) hit=1;
+        if(r->age>6.0f) hit=1;
+        if(hit){ Vector3 hp2=r->p; r->on=0; explodeRpg(hp2); }
+    }
+}
+static void drawRockets(void)
+{
+    for(int s=0;s<4;s++) if(gRok[s].on) drawRocketInFlight(&gRok[s]);
+}
+static void drawArmor(void)
+{
+    for(int i=0;i<NARM;i++)
+    {
+        Armor* a=&gArm[i]; float th=Terrain_Height(a->pos.x,a->pos.z);
+        Vector3 p=(Vector3){a->pos.x,th,a->pos.z};
+        if(a->alive) DrawVehicle(p,a->yaw,a->kind,1.0f);
+        else
+        {   // burned-out hulk + persistent flames and black smoke
+            DrawVehicle(p,a->yaw,0,1.0f);
+            Vector3 f=(Vector3){p.x,th+1.2f,p.z};
+            FX_FireLong(f,1.5f);
+            if(((int)(timeAlive*3.0f)+i)%2==0) FX_Smoke((Vector3){f.x,f.y+1.5f,f.z},1.9f);
+        }
+    }
+}
+
 static float terrainRayT(Vector3 o,Vector3 d)
 {
     // dense 1.1 m march out to 700 m: ridges always occlude rounds (no wall hacks)
@@ -681,11 +803,18 @@ static void updatePlayer(float dt)
         if(IsKeyPressed(KEY_TWO))weapon=1;
         if(IsKeyPressed(KEY_THREE))weapon=2;
         if(IsKeyPressed(KEY_ZERO))weapon=3;
-        if(Touch_SwitchPressed())weapon=(weapon+1)%4;
-        if(IsKeyPressed(KEY_R)||Touch_BPressed())reloadWeapon();
+        if(gRpgMode && IsKeyPressed(KEY_FOUR))weapon=4;   // RPG-7 only carried in the AT scenario
+        if(Touch_SwitchPressed())
+        {
+            if(gRpgMode){ static const int SEQ[5]={4,0,1,2,3}; int k=0;
+                for(int q=0;q<5;q++) if(SEQ[q]==weapon){k=q;break;} weapon=SEQ[(k+1)%5]; }
+            else weapon=(weapon+1)%4;
+        }
+        if(IsKeyPressed(KEY_R)||Touch_BPressed()){ if(weapon==4)startRpgReload(); else reloadWeapon(); }
         if(IsKeyPressed(KEY_F))tankToggleMount();
         if(Touch_MountPressed())tankToggleMount();   // dedicated on-screen 车 button
-        if(fireMouse||Touch_FireHeld()){ if(gInTank){ /* cannon handled in warUpdate */ } else if(weapon>=2)melee(); else shoot(); }
+        if(fireMouse||Touch_FireHeld()){ if(gInTank){ /* cannon handled in warUpdate */ }
+            else if(weapon==4)fireRpg(); else if(weapon>=2)melee(); else shoot(); }
         // grenade: hold M (desktop) or HOLD the 雷 button (phone) to charge,
         // release to lob; the dotted parabola is drawn in the 3D pass.
         if(grenades>0&&!gre.on)
@@ -706,11 +835,16 @@ static void updatePlayer(float dt)
         // automated verification: march north and fire. In co-op the host stays
         // dug in so the charging client avatar stays visible in its screenshot.
         yaw=0;
-        if(frame%30==0){mag[weapon]=10;shoot();}
+        if(frame%30==0){ if(weapon==4){ startRpgReload(); rpgLoaded=1; fireRpg(); } else { mag[weapon]=10; shoot(); } }
         if(gCoopRole!=1) eye.z-=22*dt;
     }
     if(reload>0){ reload-=dt*60.0f;
         if(reload<=0){ reload=0; mag[weapon]+=reloadTake; reserve[weapon]-=reloadTake; reloadTake=0; } }
+    // RPG-7 rear-load animation: a fresh HEAT round is slid into the tube from behind
+    if(rpgReload>0){ rpgReload-=dt*60.0f;
+        if(rpgReload<=0){ rpgReload=0; if(rpgReserve>0){ rpgReserve--; rpgLoaded=1; } } }
+    if(rpgFireCd>0)rpgFireCd-=dt;
+    updateRockets(dt);
     fireCd-=dt;
     if(meleeCd>0)meleeCd-=dt;
     if(meleeSwing>0)meleeSwing-=dt*3.2f; if(meleeSwing<0)meleeSwing=0;
@@ -823,7 +957,7 @@ static void updatePlayer(float dt)
     // 莫辛/98k：完整狙击镜（黑幕留圆窗）；AKM：内红点式开镜
     float adsWant=0.0f;
     if(!gSelfTest && (adsMouseHold||Touch_ADSHeld()))
-        adsWant=(weapon==0||weapon==1)?1.0f:0.0f;
+        adsWant=(weapon==0||weapon==1||weapon==4)?1.0f:0.0f;
     ads+=(adsWant-ads)*(1.0f-powf(0.000004f,dt));   // 更快的开镜/收镜过渡（旧版偏慢）
     if(ads<0.001f)ads=0.0f; if(ads>0.999f)ads=1.0f;
 }
@@ -870,6 +1004,22 @@ static void drawScope(void)
         DrawLine(cx,cy-L,cx,cy-gap,ret); DrawLine(cx,cy+gap,cx,cy+L,ret);
         DrawCircleV((Vector2){(float)cx,(float)cy},2.0f,ret);
         for(int i=1;i<=4;i++){int x=i*26; DrawLine(cx-x,cy-4,cx-x,cy+4,ret); DrawLine(cx+x,cy-4,cx+x,cy+4,ret);}
+    }
+    else if(weapon==4)
+    {
+        // ---- RPG-7 folding leaf sight + front post (mechanical, no scope) ----
+        Color vg=(Color){0,0,0,(unsigned char)(70*ads)};
+        DrawRectangle(0,0,sw,60,vg); DrawRectangle(0,sh-60,sw,60,vg);
+        Color ret=(Color){10,10,12,(unsigned char)(225*ads)};
+        int gap=12, L=120;
+        DrawLine(cx-L,cy,cx-gap,cy,ret); DrawLine(cx+gap,cy,cx+L,cy,ret); // rear leaf wings
+        // front post rising to a bead just under the aiming point
+        Vector2 fp1={(float)cx,(float)cy+4}, fp2={(float)cx,(float)cy+64};
+        DrawLineEx(fp1,fp2,5.0f,ret);
+        DrawCircleV((Vector2){(float)cx,(float)cy-2},3.2f,ret);
+        for(int i=1;i<=4;i++){int y=cy+16+i*15; DrawLine(cx-7,y,cx+7,y,ret);}  // range ladder
+        DrawTextEx(GameFont(),"RPG-7 HEAT",(Vector2){cx+L+10,cy-9},15,0,
+                   (Color){rpgLoaded?230:255,rpgLoaded?230:60,rpgLoaded?230:50,(unsigned char)(225*ads)});
     }
 }
 
@@ -942,9 +1092,12 @@ static void drawHud(void)
     }
     if(hitMark>0) DrawTextEx(GameFont(),"X",(Vector2){cx-7,cy-16},22,2,(Color){255,70,60,255});
 
-    const char* wn=weapon==0?"莫辛-纳甘步枪(5发)":weapon==1?"AKM 突击步枪(100发)":weapon==2?"大刀(近战)":"拳头(近战)";
+    const char* wn=weapon==0?"莫辛-纳甘步枪(5发)":weapon==1?"AKM 突击步枪(100发)":weapon==2?"大刀(近战)":weapon==4?"RPG-7 火箭筒(单发)":"拳头(近战)";
     CN(wn,16,GetScreenHeight()-60,18,(Color){255,236,180,255});
-    if(weapon>=2) CN("近战 · 左键劈砍/出拳",16,GetScreenHeight()-34,18,WHITE);
+    if(weapon==4)
+        CN(rpgReload>0?"装填火箭弹中… 尾部装入 HEAT 弹":TextFormat("膛内 %d / 1    携行弹 %d",rpgLoaded?1:0,rpgReserve),
+           16,GetScreenHeight()-34,18,(rpgLoaded||rpgReserve>0)?WHITE:(Color){255,120,110,255});
+    else if(weapon>=2) CN("近战 · 左键劈砍/出拳",16,GetScreenHeight()-34,18,WHITE);
     else CN(reload>0?"装填中...":TextFormat("%d / %d   (余弹 %d)",mag[weapon],mag[weapon]+reserve[weapon],reserve[weapon]),
             16,GetScreenHeight()-34,18,WHITE);
     CN(TextFormat("手雷 × %d  (长按M蓄力投掷)",grenades),230,GetScreenHeight()-34,17,(Color){255,205,160,255});
@@ -953,8 +1106,12 @@ static void drawHud(void)
     DrawRectangle(70,52,(int)(160*hp/100.0f),14,hp>35?(Color){200,60,50,255}:(Color){235,90,70,255});
     DrawRectangleLines(70,52,160,14,WHITE);
     if(gInTank) CNC(TextFormat("车体护甲 %d / 50",(int)(gVehArmor+0.5f)),150,42,14,(Color){180,220,255,255});
-    CN(TextFormat("歼敌 %d   残敌 %d   战友 %d",foesKilled,foesAlive(),palsAlive()),16,74,17,(Color){255,232,160,255});
-    CN("WASD移动 Q冲刺 空格单跳 左键攻击 右键瞄准(莫辛贴腮机瞄/AKM开镜) 1步枪 2AKM 3大刀 0拳头 R装填 M(长按)手雷 F登车 E对话  Backspace撤退",16,GetScreenHeight()-12,14,(Color){215,220,230,220});
+    if(gRpgMode) CNC(TextFormat("装甲目标剩余 %d / %d    歼敌 %d",armorAlive(),NARM,foesKilled),16,74,17,(Color){255,170,120,255});
+    else CN(TextFormat("歼敌 %d   残敌 %d   战友 %d",foesKilled,foesAlive(),palsAlive()),16,74,17,(Color){255,232,160,255});
+    CN(gRpgMode
+        ? "WASD移动 Q冲刺 空格单跳 左键发射火箭弹(单发) 右键机械表尺 1步枪2AKM3大刀0拳头 4=RPG R尾部装弹 M手雷 F登车 E对话 Esc撤退"
+        : "WASD移动 Q冲刺 空格单跳 左键攻击 右键瞄准(莫辛贴腮机瞄/AKM开镜) 1步枪 2AKM 3大刀 0拳头 R装填 M(长按)手雷 F登车 E对话  Backspace撤退",
+        16,GetScreenHeight()-12,14,(Color){215,220,230,220});
     DrawCornerFlags();
     if(headMsgT>0) CNC("爆 头！",GetScreenWidth()/2,GetScreenHeight()/2+40,26,(Color){255,90,70,235});
     drawCompass();
@@ -1645,7 +1802,24 @@ void Ground_Run(int *outMode,int *outEnding)
     spawnBattle();
     eye=(Vector3){0,0,180}; eye.y=Terrain_Height(0,180)+1.68f;
     if(gFlagTest){ eye=(Vector3){26,0,-330}; eye.y=Terrain_Height(26,-330)+1.68f; }
-    yaw=gFlagTest?0.18f:0; pitch=-0.05f; hp=100; weapon=0;
+    yaw=gFlagTest?0.18f:0; pitch=-0.05f; hp=100;
+    weapon=0;
+    for(int w2=0;w2<4;w2++)gRok[w2].on=0; rpgReload=0; rpgFireCd=0;
+    if(gRpgMode)
+    {
+        // RPG anti-tank: begin with the launcher up, one round in tube + five carried
+        weapon=4; rpgLoaded=1; rpgReserve=5;
+        // 7 armoured targets spread along the ridge: tanks lead, trucks and an
+        // AA gun cover them. Fixed layout so the line reads like an enemy column.
+        static const float AP[NARM][3]={ {60,-280,0},{-70,-300,2},{150,-250,0},
+            {-170,-330,2},{20,-360,1},{0,-250,0},{210,-330,1} };
+        for(int i=0;i<NARM;i++)
+        { float x=AP[i][0], z=AP[i][1]; int kind=(int)AP[i][2];
+          gArm[i].pos=(Vector3){x,0,z}; gArm[i].yaw=M_PI*0.5f+frand(-0.4f,0.4f);
+          gArm[i].kind=kind; gArm[i].alive=1; gArm[i].burn=0;
+          gArm[i].hp=(kind==2)?180.0f:(kind==1?120.0f:110.0f); }
+    }
+    else { rpgLoaded=0; rpgReserve=0; for(int i=0;i<NARM;i++)gArm[i].alive=0; }
     mag[0]=5; mag[1]=30; reserve[0]=0; reserve[1]=70;   // rifle 5 total, AKM 100 total
     reload=0; reloadTake=0; fireCd=0;
     grenades=1; gre=(Gre){0}; greCharging=0; greHold=0; greCd=0;
@@ -1743,7 +1917,7 @@ void Ground_Run(int *outMode,int *outEnding)
         if(gShake>0.01f)   // shell shock camera shake
         { float s=gShake*0.55f; Vector3 sh=v3(frand(-s,s),frand(-s,s),frand(-s,s));
           cam.position=vadd(cam.position,sh); cam.target=vadd(cam.target,sh); }
-        { float fovTarget=(weapon==0)?9.0f:40.0f;   // 莫辛/98k 8倍镜：72°/9°=8×；AKM 内红点收窄到40°
+        { float fovTarget=(weapon==0)?9.0f:(weapon==1?40.0f:44.0f);  // 8x 72/9=8×；AKM 红点40；RPG 机械表尺44
           cam.fovy=72.0f-ads*(72.0f-fovTarget); }
         // hide the first-person gun when something is right in front of the
         // muzzle (steep ground / wall / a soldier) so it can't clip through.
@@ -1787,6 +1961,7 @@ void Ground_Run(int *outMode,int *outEnding)
         DrawVehicle((Vector3){170, Terrain_Height(170,-180), -180}, 1.0f, 0, 1.0f);
         // live battlefield systems: mines, the enemy/captured tank, strafing runs
         if(gCoopRole!=2) warDraw();
+        if(gRpgMode) drawArmor();
         drawTrees();
         // shell craters / scorch marks — the ground must read as fought over
         for(int i=0;i<NBURN;i++){ float bx=BURN_PT[i][0],bz=BURN_PT[i][1];
@@ -1805,6 +1980,7 @@ void Ground_Run(int *outMode,int *outEnding)
         drawNetBodies();   // other real co-op players
         // grenade in flight + charging arc preview
         if(gre.on) DrawGrenadeModel(gre.p,gre.age*10.0f);
+        drawRockets();
         if(greCharging)
         {
             Vector3 d2=aimDir();
@@ -1820,7 +1996,7 @@ void Ground_Run(int *outMode,int *outEnding)
         FX_Draw3D(cam);
         if(gSelfTest && gCoopRole==0 && frame>=148)
         {
-            weapon = (frame<200)?1:(frame<260?2:0);   // deterministic view-model calibration
+            weapon = (frame<200)?1:(frame<260?2:(frame<348?0:(frame<408?4:0)));   // ... + RPG-7 calibration
             ads = (frame>=292 && frame<340)?1.0f:0.0f;  // capture the 8x scope fully aimed
             gunOccluded=0; greCharging=0;    // force a clean view-model capture
         }
@@ -1832,7 +2008,9 @@ void Ground_Run(int *outMode,int *outEnding)
         if(!gInTank && ads<0.5f && !gunOccluded)
         {
             float rMax=(weapon==0)?75.0f:100.0f;
-            float reload01=(reload>0)?clampf(1.0f-reload/rMax,0.0f,1.0f):0.0f;
+            float reload01=(weapon==4)
+                ? ((rpgReload>0)?clampf(1.0f-rpgReload/112.0f,0.0f,1.0f):0.0f)
+                : ((reload>0)?clampf(1.0f-reload/rMax,0.0f,1.0f):0.0f);
             if(greCharging) DrawGrenadeView(cam,greHold);
             else DrawRifleView(cam,weapon,gunKick,reload01);
         }
@@ -1854,6 +2032,7 @@ void Ground_Run(int *outMode,int *outEnding)
             if(frame==260) TakeScreenshot(TextFormat("%s/shot_ground.png",gShotDir));
             if(frame==278) TakeScreenshot(TextFormat("%s/shot_scope_model.png",gShotDir));
             if(frame==330) TakeScreenshot(TextFormat("%s/shot_scope_ads.png",gShotDir));
+            if(frame==372) TakeScreenshot(TextFormat("%s/shot_rpg.png",gShotDir));
         }
         if(gFlagTest && frame==150) TakeScreenshot(TextFormat("%s/shot_flag.png",gShotDir));
 
@@ -1868,8 +2047,20 @@ void Ground_Run(int *outMode,int *outEnding)
         // client: victory is declared by the host snapshot
         if(gCoopRole==2 && gHaveSnap && gNetWin==1 && celebrate<=0)
         { celebrate=3.4f; planted=1; }
-        if(hp<=0){ endId=(foesKilled>=5||(eye.z< -250))?(Map_IsChosin()?206:203):(Map_IsChosin()?206:204); break; }
-        if(gCoopRole!=2 && celebrate<=0)
+        if(hp<=0){ endId=(gRpgMode)?204:(foesKilled>=5||(eye.z< -250))?(Map_IsChosin()?206:203):(Map_IsChosin()?206:204); break; }
+        if(gRpgMode && gCoopRole!=2 && celebrate<=0)
+        {
+            // Anti-tank objective: every armoured vehicle on the ridge must burn.
+            if(armorAlive()==0)
+            {
+                celebrate=3.4f;
+                if(pals[0].alive) planter=0;
+                else { int ids[NP],k=0; for(int i=0;i<NP;i++)if(pals[i].alive)ids[k++]=i;
+                       planter=k?ids[irand(0,k-1)]:-1; }
+                if(gSelfTest && gCoopRole==0){endId=207;break;}
+            }
+        }
+        else if(!gRpgMode && gCoopRole!=2 && celebrate<=0)
         {
             // Take the hill: stand on the objective with the garrison broken
             // (annihilated, or routed to a remnant <=12) and hold it 4.5 s.
@@ -1884,7 +2075,7 @@ void Ground_Run(int *outMode,int *outEnding)
             }
         }
         else if(celebrate>0 && (celebrate-dt)<=0)
-        { endId=(fa==0)?(Map_IsChosin()?205:201):(Map_IsChosin()?205:202); break; }
+        { endId=gRpgMode?207:(fa==0)?(Map_IsChosin()?205:201):(Map_IsChosin()?205:202); break; }
         // dev co-op verification: run ~13s, screenshot around 9s, then report
         if(gSelfTest && gCoopRole!=0)
         {
@@ -1917,8 +2108,9 @@ void Ground_Run(int *outMode,int *outEnding)
     gGroundResult.hp=hp; gGroundResult.foesKilled=foesKilled; gGroundResult.friendliesAlive=palsAlive();
     gGroundResult.holdTime=(int)holdT; gGroundResult.timeAlive=timeAlive;
     // classify win/loss BEFORE the id is re-themed into one of many endings
-    int victory=(endId==201||endId==202||endId==205);
-    if(victory)
+    int victory=(endId==201||endId==202||endId==205||endId==207);
+    if(endId==207) { /* RPG anti-tank ending stays its own win */ }
+    else if(victory)
     {
         if(Map_IsChosin()) endId=205;
         else if(Map_IsSnow()) endId=210;        // 雪原歼敌

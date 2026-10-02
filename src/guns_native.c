@@ -13,7 +13,8 @@ static int sReady=0;
 
 typedef struct { Mesh mesh; Material mat; int hasTex; Texture2D tex; } Sub;
 typedef struct { Sub* s; int n; } Gun;
-static Gun gRifle={0}, gAkm={0}, gKnife={0};
+static Gun gRifle={0}, gAkm={0}, gKnife={0}, gRpg={0};
+extern const GGunData G_RPG;   // src/rpg_data.c (embedded user RPG-7 GLB)
 
 // first-person arms (khaki volunteer-uniform sleeves + skin hands), drawn
 // gripping the real weapon: right hand on the grip/trigger, left hand under
@@ -155,7 +156,7 @@ static Gun build(const GGunData* d)
 void GunsNative_Load(void)
 {
     if(sReady)return;
-    gRifle=build(&G_RIFLE); gAkm=build(&G_AKM); gKnife=build(&G_KNIFE);
+    gRifle=build(&G_RIFLE); gAkm=build(&G_AKM); gKnife=build(&G_KNIFE); gRpg=build(&G_RPG);
     {
         float mn[3]={1e30f,1e30f,1e30f}, mx[3]={-1e30f,-1e30f,-1e30f};
         for(int i=0;i<G_RIFLE.nsub;i++){ const GSubData*sd=&G_RIFLE.sub[i];
@@ -180,11 +181,11 @@ void GunsNative_Load(void)
 void GunsNative_Unload(void)
 {
     if(!sReady)return;
-    Gun gs[3]={gRifle,gAkm,gKnife};
+    Gun gs[4]={gRifle,gAkm,gKnife,gRpg};
     // NB: this raylib build's UnloadMaterial() also frees material.shader. All gun
     // materials SHARE gLit (owned/freed by scene.c), so tear down maps+texture
     // manually and never let UnloadMaterial release the shared shader.
-    for(int gi=0;gi<3;gi++) for(int i=0;i<gs[gi].n;i++)
+    for(int gi=0;gi<4;gi++) for(int i=0;i<gs[gi].n;i++)
     {
         Sub* o=&gs[gi].s[i];
         UnloadMesh(o->mesh);
@@ -228,6 +229,8 @@ static void gunParams(int type, float*S, float*fF, float*fR, float*fU,
                  *pYaw=0.55f; *pPitch=0.10f; *pRoll=0.0f; }          // AKM (settled FPS pose)
     else if(type==2){ *S=0.58f; *fF=0.56f; *fR=0.13f; *fU=-0.17f;
                       *pYaw=-0.05f; *pPitch=0.10f; *pRoll=-0.15f; }  // bayonet
+    else if(type==4){ *S=0.98f; *fF=0.54f; *fR=0.14f; *fU=-0.20f;
+                      *pYaw=0.30f; *pPitch=0.06f; *pRoll=0.0f; }          // RPG-7 launcher
     else { *S=0.95f; *fF=0.60f; *fR=0.20f; *fU=-0.20f;
            *pYaw=0.42f; *pPitch=0.08f; *pRoll=0.0f; }                // Mosin / 98k
 }
@@ -263,7 +266,7 @@ void GunsNative_DrawView(Camera3D cam, int type, float kick, float reload01)
     if(!sReady)return;
     // view-model always renders on top and never clips into nearby walls/ground
     rlDisableDepthTest();
-    Gun* g = type==1?&gAkm : type==2?&gKnife : &gRifle;    float S,fF,fR,fU,pYaw,pPitch,pRoll; gunParams(type,&S,&fF,&fR,&fU,&pYaw,&pPitch,&pRoll);
+    Gun* g = type==1?&gAkm : type==2?&gKnife : type==4?&gRpg : &gRifle;    float S,fF,fR,fU,pYaw,pPitch,pRoll; gunParams(type,&S,&fF,&fR,&fU,&pYaw,&pPitch,&pRoll);
     Vector3 f=vnorm(vsub(cam.target,cam.position));
     Vector3 grip=gunGrip(cam,type,kick);
     float yaw=atan2f(-f.x,-f.z);
@@ -284,10 +287,22 @@ void GunsNative_DrawView(Camera3D cam, int type, float kick, float reload01)
     float re=(type!=2 && reload01>0.0f && reload01<1.0f)?sinf(M_PI*reload01):0.0f;
     if(re>0.001f)
     {
+        if(type==4)
+        {
+            // RPG-7 rear-load: the tube rolls onto its side and drops so the open
+            // breech faces the loader; a sharp mid dip is the HEAT round going in.
+            float seat=0.62f+0.38f*sinf(reload01*M_PI*2.0f);
+            q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){1,0,0}, 0.82f*re*seat));
+            q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){0,0,1}, 0.62f*re));
+            grip=vadd(grip, vadd(vmul(uu,-0.26f*re), vadd(vmul(rr,0.10f*re), vmul(f,-0.16f*re))));
+        }
+        else
+        {
         float beat=0.75f+0.25f*sinf(reload01*M_PI*2.0f);   // little settle on seat
         q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){1,0,0}, 0.62f*re*beat));
         q=QuaternionMultiply(q,QuaternionFromAxisAngle((Vector3){0,0,1},-0.28f*re));
         grip=vadd(grip, vadd(vmul(uu,-0.17f*re), vmul(f,-0.10f*re)));
+        }
     }
     if(type==2 && sSwingT>0)
     {

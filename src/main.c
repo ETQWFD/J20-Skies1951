@@ -77,6 +77,7 @@ static const char* gndPara(int id)
     case 203: return "你在冲锋路上倒下时，身边已经躺着数倍于你的敌人。|身后的战友跨过你继续向前，号声没有停。";
     case 205: return "冲锋号在黎明前的雪原上吹响，你们踏过齐膝深的雪夺下了隘口阵地。|长津湖畔的寒夜里，有人永远保持着冲锋的姿态，化成了冰雪中的雕像。";
     case 206: return "你在零下三十多度的雪地里战斗到最后，手指已扣不动枪栓。|号声远去时，阵地上仍保持着伏击的队形——冰与火都没能让这支连队后退一步。";
+    case 207: return "山脊上最后一辆敌坦克的炮塔被掀翻，整条装甲纵队化作七团黑烟。|你扛起还在发烫的火箭筒——没有飞机坦克的步兵，就用这根'烧火棍'把钢铁砸烂。这，就是反坦克手的仗。";
     case 210: return "雪原上的最后一辆军车冒起黑烟，守敌被全歼，你们踩着没膝的雪追过了公路。|捷报传回时，后方的运输队正顶着轰炸把炒面和炮弹往前送——你们守住了他们脚下的路。";
     case 211: return "夜色是最好的伪装。你们摸到阵地前沿，一声号响撕开了缺口，天亮前结束了战斗。|夜战近战，是当年装备落后的志愿军最擅长的打法——拼的就是一口气。";
     case 212: return "残阳把阵地染成血色的时候，你们终于把残敌压了下去，红旗在黄昏的风里立住。|身后是被炮火翻耕过无数遍的山坡，前面是连夜南撤的敌军。";
@@ -142,6 +143,7 @@ void DrawEnding(int mode,int endingId,int fromAir,void* res)
         case 203:title="英勇牺牲 · 浩气长存";break;
         case 205:title="长津湖 · 冰血隘口";break;
         case 206:title="冰雕连 · 军魂永驻";break;
+        case 207:title="反坦克手 · 钢铁火葬";break;
         case 210:title="雪原追击 · 全线告捷";break;
         case 211:title="夜袭破阵 · 拂晓收兵";break;
         case 212:title="浴血黄昏 · 红旗不倒";break;
@@ -274,12 +276,13 @@ static int menuLoop(int *go)
         CNC("长 空 · 1951",SW/2,40,46,(Color){255,232,150,255});
         CNC(tr("subtitle"),SW/2,92,18,(Color){225,230,240,235});
 
-        // ---- top row: air war / LAN coop / settings / history & controls ----
-        const char* topN[4]={tr("air"),tr("coop"),tr("settings"),tr("histShort")};
-        int topTo[4]={ST_AIR,-2,ST_SETTINGS,ST_HELP};
-        float topW=268, topGap=18, topY=112, topH=42;
-        float topX0=SW/2.0f-(4*topW+3*topGap)/2.0f;
-        for(int i=0;i<4;i++)
+        // ---- top row: air war / RPG anti-tank / LAN coop / settings / history ----
+        const char* topN[5]={tr("air"),"RPG·反坦克",tr("coop"),tr("settings"),tr("histShort")};
+        int topTo[5]={ST_AIR,-3,-2,ST_SETTINGS,ST_HELP};
+        float topGap=14, topY=112, topH=42;
+        float topW=(SW-48.0f-4*topGap)/5.0f; if(topW>250)topW=250; if(topW<132)topW=132;
+        float topX0=SW/2.0f-(5*topW+4*topGap)/2.0f;
+        for(int i=0;i<5;i++)
         {
             Rectangle r={topX0+i*(topW+topGap),topY,topW,topH};
             bool hov=M_HIT(r);
@@ -288,7 +291,8 @@ static int menuLoop(int *go)
             CNC(topN[i],(int)(r.x+topW/2),(int)r.y+11,19,(Color){240,240,245,255});
             if(M_PRESS(r))
             {
-                if(topTo[i]==-2){ guard=0.3f; int lr=Coop_Lobby();
+                if(topTo[i]==-3){ gRpgMode=1; gScenario=0; sel=ST_GROUND; }
+                else if(topTo[i]==-2){ gRpgMode=0; guard=0.3f; int lr=Coop_Lobby();
                     if(lr==1||lr==2){ sel=ST_GROUND; gScenario=gCoopScenario; } }
                 else sel=topTo[i];
             }
@@ -324,8 +328,8 @@ static int menuLoop(int *go)
                 if(a[0]) CNC(a,(int)(r.x+cellW/2),(int)r.y+26,15,(Color){235,238,245,255});
                 if(b[0]) CNC(b,(int)(r.x+cellW/2),(int)r.y+42,15,(Color){235,238,245,255});
             }
-            if(M_PRESS(r)){ sel=ST_GROUND; gScenario=i; }
-            if(guard<=0 && i<12 && IsKeyPressed(CAMP_KEY[i])){ sel=ST_GROUND; gScenario=i; }
+            if(M_PRESS(r)){ gRpgMode=0; sel=ST_GROUND; gScenario=i; }
+            if(guard<=0 && i<12 && IsKeyPressed(CAMP_KEY[i])){ gRpgMode=0; sel=ST_GROUND; gScenario=i; }
         }
         #undef M_HIT
         #undef M_PRESS

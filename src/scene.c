@@ -525,8 +525,8 @@ void DrawFirstPersonLegs(Camera3D cam, int moving, float phase)
 
 void DrawRifleView(Camera3D cam, int type, float kick, float reload01)
 {
-    // real embedded PBR small-arms for Mosin / AKM / bayonet; fists stay procedural
-    if(type<=2 && GunsNative_Ready()){ GunsNative_DrawView(cam,type,kick,reload01); return; }
+    // real embedded PBR weapons for Mosin / AKM / bayonet / RPG-7; fists stay procedural
+    if((type<=2||type==4) && GunsNative_Ready()){ GunsNative_DrawView(cam,type,kick,reload01); return; }
     (void)reload01;
     Vector3 f=vnorm(vsub(cam.target,cam.position));
     Vector3 r=vnorm(vcross(f,cam.up));
@@ -607,7 +607,7 @@ void DrawRifleView(Camera3D cam, int type, float kick, float reload01)
 }
 Vector3 RifleMuzzle(Camera3D cam, int type)
 {
-    if(type<=2 && GunsNative_Ready()) return GunsNative_MuzzlePoint(cam,type);
+    if((type<=2||type==4) && GunsNative_Ready()) return GunsNative_MuzzlePoint(cam,type);
     (void)cam;(void)type; return sMuzzle;
 }
 
@@ -630,8 +630,10 @@ static void grenadeParts(Matrix M)
     DrawPart(P_CYL,C_STEEL,M,MPart(v3(0,0.165f,0),(Vector3){1,0,0},0,v3(0.05f,0.045f,0.05f)));
     // striker lever (spoon) running down one side
     DrawPart(P_BOX,C_STEEL,M,MPart(v3(0.04f,0.20f,0),(Vector3){0,0,1},0.25f,v3(0.018f,0.12f,0.05f)));
-    // pull ring (thin steel ring beside the lever)
-    DrawPart(P_CYL,C_STEEL,M,MPart(v3(0.0f,0.135f,0.072f),(Vector3){1,0,0},0,v3(0.032f,0.012f,0.032f)));
+    // pull ring: a real split-ring standing on its side at the end of the fuse,
+    // linked by a short straight wire to the striker.
+    DrawPart(P_BOX,C_STEEL,M,MPart(v3(0.0f,0.168f,0.05f),(Vector3){1,0,0},0,v3(0.008f,0.008f,0.05f)));
+    DrawPart(P_CYL,C_STEEL,M,MPart(v3(0.0f,0.150f,0.085f),(Vector3){1,0,0},0,v3(0.034f,0.012f,0.034f)));
 }
 void DrawGrenadeModel(Vector3 pos, float spin)
 {
@@ -652,6 +654,11 @@ void DrawGrenadeView(Camera3D cam, float pull)
     Quaternion q=QuaternionMultiply(QuaternionFromAxisAngle((Vector3){0,1,0},yaw),
                                     QuaternionFromAxisAngle((Vector3){1,0,0},pitch));
     Matrix M=MatrixMultiply(QuaternionToMatrix(q),MatrixTranslate(grip.x,grip.y,grip.z));
+    // supporting hand cupping the bottom of the grenade (palm + curled fingers + thumb)
+    DrawPart(P_SPHERE,C_SKIN,M,MPart(v3(0,-0.15f,0),(Vector3){1,0,0},0,v3(0.085f,0.06f,0.085f)));
+    for(int i=-1;i<=1;i++)
+        DrawPart(P_CYL,C_SKIN,M,MPart(v3(i*0.05f,-0.075f,0.085f),(Vector3){0,0,1},0,v3(0.026f,0.10f,0.026f)));
+    DrawPart(P_CYL,C_SKIN,M,MPart(v3(0.09f,-0.09f,0.02f),(Vector3){0,0,1},0.5f,v3(0.026f,0.09f,0.026f)));
     grenadeParts(M);
 }
 

@@ -8,6 +8,7 @@ PROJ=/home/user/Doubao/chats/38443589649431042/J20_Skies1951
 AND=/home/user/android
 NDK=$AND/android-ndk-r25c
 TC=$NDK/toolchains/llvm/prebuilt/linux-x86_64
+export PATH=$TC/bin:$PATH            # force NDK ld.lld ahead of host GNU ld
 SDK=$AND/sdk
 BT=$SDK/build-tools/34.0.0
 ANDROID_JAR=$SDK/platforms/android-33/android.jar
@@ -41,7 +42,7 @@ CFLAGS="-Os -fPIC -std=c11 -DANDROID -DPLATFORM_ANDROID -DGRAPHICS_API_OPENGL_ES
  -Wno-deprecated-declarations \
  -I$PROJ/src -I$RLSRC -I$GLUE"
 
-LDFLAGS="-shared -Wl,-soname,libmain.so -Wl,--build-id -Wl,-z,noexecstack \
+LDFLAGS="-shared -fuse-ld=lld -Wl,-soname,libmain.so -Wl,--build-id -Wl,-z,noexecstack \
  -u ANativeActivity_onCreate -Wl,--gc-sections"
 LIBS="-lm -llog -landroid -lEGL -lGLESv2 -lOpenSLES -ldl"
 
@@ -68,7 +69,7 @@ done
 cat > "$STAGE/AndroidManifest.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="$PKG" android:versionCode="19" android:versionName="2.1.5">
+    package="$PKG" android:versionCode="20" android:versionName="2.1.6">
     <uses-sdk android:minSdkVersion="$API" android:targetSdkVersion="$TARGETSDK" />
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
