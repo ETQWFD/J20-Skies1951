@@ -53,15 +53,15 @@ code{background:#0a0e15;padding:2px 7px;border-radius:6px;color:#cfe0f5;font-siz
     <h1>长空 · 1951</h1>
     <div class="sub">J-20 SKIES OVER KOREA — 跨平台 3D 战争射击游戏<br>驾驶歼-20 搏击长空，或作为志愿军步兵冲锋夺旗。</div>
     <div class="badges">
-      <span class="tag">最新 v2.1.6：主菜单新增第四个模式 <strong>「RPG·反坦克」</strong>——使用你上传的<strong>真实 RPG-7 GLB 模型</strong>（13298 顶点 / 16098 三角，内置 PBR 贴图），筒身、木质护木、黑色弹头喇叭口、机械折叠表尺全部还原并接入第一人称双手持握。<strong>膛内只有 1 发</strong>，按 R 从尾部装填 HEAT 弹（约 1.9 秒、侧倾下沉的清晰装弹动画），携行 5 发；火箭弹真实平直微坠飞行、带尾焰与烟迹，命中爆炸，可<strong>一击击毁坦克/军车/防空车</strong>（共 7 个装甲目标沿山脊列阵），近弹会误伤自己和战友，开火还有后喷尾焰。新增机械表尺开镜（射程梯+前准星）、反坦克专属胜利结局；同时重绘了手雷（侧立拉环、拉环连杆、托弹手掌）。EXE 与双架构(arm64+32位)APK 重编，自测 rc=0</span>
+      <span class="tag">最新 v2.1.7：修复手机<strong>误触</strong>与<strong>远程狙击开镜</strong>。①视角触摸加入 <strong>13px 移动门闩</strong>——手指落在右屏若只是轻点或极短抖动，不再转动视角，必须真正拖动超过门闩才开始转，且起转那一刻不产生跳变，彻底消除“碰一下就转 180°/碰掉瞄准”；②<strong>镜/换/火/雷等按钮热区扩大到绘制圆的 1.55 倍</strong>，拇指落点稍偏也能按中，不再误判成转视角；③屏幕最右缘设为<strong>无效边带</strong>，拇指搭在边框不会转视角；④「镜」键画大并上移，莫辛/98k 的 <strong>8 倍镜</strong>与 AKM 红点在手机上更易开启、开镜后可继续滑动微调（开镜灵敏度自动调细）。电脑版操控不变。EXE 与双架构(arm64+32位)APK 重编，自测 rc=0</span>
       <span class="tag">Windows EXE（x86_64）</span>
       <span class="tag">Android APK（arm64-v8a + armeabi-v7a）</span>
       <span class="tag">Linux 可编译</span>
       <span class="tag">纯 C · raylib · 开源</span>
     </div>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.6/J20_Skies1951.exe" download>⬇ 下载 Windows 版（.exe 直链）</a>
-      <a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.6/J20_Skies1951.apk" download>⬇ 下载安卓版（.apk 直链）</a>
+      <a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.7/J20_Skies1951.exe" download>⬇ 下载 Windows 版（.exe 直链）</a>
+      <a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.7/J20_Skies1951.apk" download>⬇ 下载安卓版（.apk 直链）</a>
       <a class="btn ghost" href="https://github.com/ETQWFD/J20-Skies1951">查看源码仓库</a>
     </div>
   </div>
@@ -111,12 +111,12 @@ code{background:#0a0e15;padding:2px 7px;border-radius:6px;color:#cfe0f5;font-siz
 <section>
   <div class="wrap">
     <h2>下载与安装</h2>
-    <p class="lead">点击下方按钮直接下载最新 v2.1.6 安装文件（直链，不跳转到 Release 列表页）。</p>
+    <p class="lead">点击下方按钮直接下载最新 v2.1.7 安装文件（直链，不跳转到 Release 列表页）。</p>
     <div class="grid">
-      <div class="card"><h3>Windows</h3><p><code>J20_Skies1951.exe</code>，64 位绿色单文件，双击运行（会带一个控制台日志窗）。</p><p><a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.6/J20_Skies1951.exe" download>直接下载 EXE</a></p></div>
-      <div class="card"><h3>Android</h3><p><code>J20_Skies1951.apk</code>，一个包同时支持 64 位与 32 位，需 Android 7.0 及以上。</p><p><a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.6/J20_Skies1951.apk" download>直接下载 APK</a></p></div>
-      <div class="card"><h3>微信传包提示损坏？</h3><p>微信会把 APK 改名 <code>.apk.1</code>。请下载 <code>安卓安装包.zip</code>，解压后再安装，或把文件名末尾的 <code>.1</code> 删除。</p><p><a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.6/Android_Installer_v2.1.6.zip" download>下载防损坏 ZIP</a></p></div>
-      <div class="card"><h3>跨网联机服务器</h3><p><code>Kanye</code> 纯 C 中继 + <code>frpc.ini</code> 模板：不在同一 WiFi 也能联机。<code>Kanye.exe 24463 &amp; frpc</code> 启动，游戏内“添加服务器”。</p><p><a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.6/Kanye_Server_v2.1.6.zip" download>下载服务器包 ZIP</a></p></div>
+      <div class="card"><h3>Windows</h3><p><code>J20_Skies1951.exe</code>，64 位绿色单文件，双击运行（会带一个控制台日志窗）。</p><p><a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.7/J20_Skies1951.exe" download>直接下载 EXE</a></p></div>
+      <div class="card"><h3>Android</h3><p><code>J20_Skies1951.apk</code>，一个包同时支持 64 位与 32 位，需 Android 7.0 及以上。</p><p><a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.7/J20_Skies1951.apk" download>直接下载 APK</a></p></div>
+      <div class="card"><h3>微信传包提示损坏？</h3><p>微信会把 APK 改名 <code>.apk.1</code>。请下载 <code>安卓安装包.zip</code>，解压后再安装，或把文件名末尾的 <code>.1</code> 删除。</p><p><a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.7/Android_Installer_v2.1.7.zip" download>下载防损坏 ZIP</a></p></div>
+      <div class="card"><h3>跨网联机服务器</h3><p><code>Kanye</code> 纯 C 中继 + <code>frpc.ini</code> 模板：不在同一 WiFi 也能联机。<code>Kanye.exe 24463 &amp; frpc</code> 启动，游戏内“添加服务器”。</p><p><a class="btn primary" href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.7/Kanye_Server_v2.1.7.zip" download>下载服务器包 ZIP</a></p></div>
     </div>
   </div>
 </section>
@@ -153,7 +153,7 @@ code{background:#0a0e15;padding:2px 7px;border-radius:6px;color:#cfe0f5;font-siz
   <div class="wrap">
     长空·1951 · J-20 Skies Over Korea &nbsp;|&nbsp;
     <a href="https://github.com/ETQWFD/J20_Skies1951">GitHub 仓库</a> &nbsp;|&nbsp;
-    <a href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.6/J20_Skies1951.apk">下载安卓 APK</a>
+    <a href="https://github.com/ETQWFD/J20-Skies1951/releases/download/v2.1.7/J20_Skies1951.apk">下载安卓 APK</a>
   </div>
 </footer>
 </body>
