@@ -83,6 +83,7 @@ void   DrawSabre(Vector3 pos, Quaternion q, float scale);
 void   DrawSoldier(Vector3 feet, float yaw, int uniform, float scale, int rifleUp, float phase, int moving);
 void   DrawSoldierDown(Vector3 feet, float yaw, int uniform, float scale);
 void   DrawVehicle(Vector3 pos, float yaw, int kind, float scale);
+void   DrawTank34(Vector3 pos, float yaw, float scale);
 void   DrawBlobShadow(Vector3 feet, float radius);
 void   DrawMissile(Vector3 pos, Quaternion q);
 void   DrawBomb(Vector3 pos, Quaternion q);

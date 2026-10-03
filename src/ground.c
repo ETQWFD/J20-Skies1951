@@ -569,10 +569,10 @@ static void drawArmor(void)
     {
         Armor* a=&gArm[i]; float th=Terrain_Height(a->pos.x,a->pos.z);
         Vector3 p=(Vector3){a->pos.x,th,a->pos.z};
-        if(a->alive) DrawVehicle(p,a->yaw,a->kind,1.0f);
+        if(a->alive){ if(a->kind==2) DrawTank34(p,a->yaw,1.0f); else DrawVehicle(p,a->yaw,a->kind,1.0f); }
         else
         {   // burned-out hulk + persistent flames and black smoke
-            DrawVehicle(p,a->yaw,0,1.0f);
+            if(a->kind==2) DrawTank34(p,a->yaw,1.0f); else DrawVehicle(p,a->yaw,0,1.0f);
             Vector3 f=(Vector3){p.x,th+1.2f,p.z};
             FX_FireLong(f,1.5f);
             if(((int)(timeAlive*3.0f)+i)%2==0) FX_Smoke((Vector3){f.x,f.y+1.5f,f.z},1.9f);
@@ -1820,8 +1820,8 @@ static void warDraw(void)
     }
     // contact shadows under the tank
     DrawBlobShadow(gTank.pos,3.6f);
-    // enemy / captured tank (slightly enlarged model)
-    DrawVehicle((Vector3){gTank.pos.x,gTank.pos.y,gTank.pos.z}, -gTank.yaw, 2, 1.55f);
+    // enemy / captured tank — real embedded T-34 model (~6 m, true scale)
+    DrawTank34((Vector3){gTank.pos.x,gTank.pos.y,gTank.pos.z}, gTank.yaw, 1.0f);
     // OUR drivable cargo truck, parked at the start line and carried with the driver
     DrawBlobShadow(gCarPos,2.6f);
     DrawVehicle((Vector3){gCarPos.x,gCarPos.y,gCarPos.z}, -gCarYaw, 0, 1.25f);
@@ -2019,8 +2019,8 @@ void Ground_Run(int *outMode,int *outEnding)
         }
         // wrecked truck decoys
         DrawVehicle((Vector3){-90, Terrain_Height(-90,-60), -60}, 0.6f, 0, 1.0f);
-        DrawVehicle((Vector3){110, Terrain_Height(110,-120), -120}, 2.2f, 2, 1.0f);
-        DrawVehicle((Vector3){-150, Terrain_Height(-150,-310), -310}, 0.2f, 2, 1.0f);
+        DrawTank34((Vector3){110, Terrain_Height(110,-120), -120}, PI*0.95f, 1.0f);
+        DrawTank34((Vector3){-150, Terrain_Height(-150,-310), -310}, PI*1.05f, 1.0f);
         DrawVehicle((Vector3){170, Terrain_Height(170,-180), -180}, 1.0f, 0, 1.0f);
         // live battlefield systems: mines, the enemy/captured tank, strafing runs
         if(gCoopRole!=2) warDraw();

@@ -15,6 +15,8 @@ typedef struct { Mesh mesh; Material mat; int hasTex; Texture2D tex; } Sub;
 typedef struct { Sub* s; int n; } Gun;
 static Gun gRifle={0}, gAkm={0}, gKnife={0}, gRpg={0};
 extern const GGunData G_RPG;   // src/rpg_data.c (embedded user RPG-7 GLB)
+extern const GGunData GT34;    // src/t34_data.c (embedded user T-34 tank GLB)
+static Gun gT34={0};
 
 // first-person arms (khaki volunteer-uniform sleeves + skin hands), drawn
 // gripping the real weapon: right hand on the grip/trigger, left hand under
@@ -157,6 +159,7 @@ void GunsNative_Load(void)
 {
     if(sReady)return;
     gRifle=build(&G_RIFLE); gAkm=build(&G_AKM); gKnife=build(&G_KNIFE); gRpg=build(&G_RPG);
+    gT34=build(&GT34);
     {
         float mn[3]={1e30f,1e30f,1e30f}, mx[3]={-1e30f,-1e30f,-1e30f};
         for(int i=0;i<G_RIFLE.nsub;i++){ const GSubData*sd=&G_RIFLE.sub[i];
@@ -181,11 +184,11 @@ void GunsNative_Load(void)
 void GunsNative_Unload(void)
 {
     if(!sReady)return;
-    Gun gs[4]={gRifle,gAkm,gKnife,gRpg};
+    Gun gs[5]={gRifle,gAkm,gKnife,gRpg,gT34};
     // NB: this raylib build's UnloadMaterial() also frees material.shader. All gun
     // materials SHARE gLit (owned/freed by scene.c), so tear down maps+texture
     // manually and never let UnloadMaterial release the shared shader.
-    for(int gi=0;gi<4;gi++) for(int i=0;i<gs[gi].n;i++)
+    for(int gi=0;gi<5;gi++) for(int i=0;i<gs[gi].n;i++)
     {
         Sub* o=&gs[gi].s[i];
         UnloadMesh(o->mesh);
@@ -202,6 +205,16 @@ void GunsNative_Unload(void)
     sReady=0;
 }
 int GunsNative_Ready(void){ return sReady; }
+
+// Draw the embedded T-34 tank in WORLD space. The baked local frame is already
+// metres with nose -Z / up +Y / ground y=0, so the caller supplies a world
+// matrix = root(pos, RotY(-heading), scale). Nothing else is scaled here.
+void GunsNative_DrawT34(Matrix world)
+{
+    if(!sReady)return;
+    for(int i=0;i<gT34.n;i++)
+        if(gT34.s[i].mesh.vaoId>0) DrawMesh(gT34.s[i].mesh,gT34.s[i].mat,world);
+}
 
 void Weapon_SwingTickNative(void){ sSwingT=SWING_DUR; }
 void Weapon_AnimUpdateNative(float dt){ if(sSwingT>0){sSwingT-=dt; if(sSwingT<0)sSwingT=0;} }

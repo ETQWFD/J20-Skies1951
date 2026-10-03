@@ -551,6 +551,16 @@ void DrawVehicle(Vector3 pos, float yaw, int kind, float scale)
     }
 }
 
+// Real embedded T-34 (user GLB, baked metres, nose -Z / up +Y / ground y=0).
+// Same heading convention as everything else: pass the gameplay heading yaw and
+// we render at -yaw so the hull nose/barrel point exactly along flatFwd(yaw).
+void DrawTank34(Vector3 pos, float yaw, float scale)
+{
+    if(!GunsNative_Ready()){ DrawVehicle(pos,yaw,2,scale>1.0f?1.0f:scale); return; }
+    Quaternion q=QuaternionFromAxisAngle((Vector3){0,1,0}, -yaw);
+    Matrix w=root(pos,q,scale);
+    GunsNative_DrawT34(w);
+}
 // ------------------------------------------------------------- first-person rifle
 static Vector3 sMuzzle;
 static float sSwingT=0;                 // >0 while a blade/fist swing is playing
